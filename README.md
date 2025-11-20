@@ -3,7 +3,7 @@ Heat waves, cold spells, and their co-exposures with high-level PM2.5 pollution 
 
 This repository contains the data and analysis code used in our study on "Heat waves, cold spells, and their co-exposures with high-level PM2.5 pollution are associated with elevated risks of respiratory syncytial virus epidemics".
 
-**Data** branch.
+## Data Branch
 The `data` folder includes:
 1. **Shapefiles**: Shapefile of Chile (cl_shp) and Japan (jp_shp).
 2. **Region Coordinates**: CSV file (Lonlat) containing the longitude and latitude of 16 Chilean regions and the longitude and latitude of 47 Japanese prefectures.
@@ -19,9 +19,9 @@ Descriptive analysis was performed using the demo data, focusing on spatial and 
 2. **Statistical Models**
 Regression analyses examining associations between RSV infections and heat waves, cold spells, and their co-exposures with high-level PM2.5 pollution.
   
-3. ### Subgroup Analyses
+3. **Subgroup Analyses**
 Includes detailed results from subgroup analyses conducted across different geographical groups.
 
-4. ### Sensitivity Analyses
+4. **Sensitivity Analyses**
 Contains information on the sensitivity analyses we performed to validate the robustness of our findings.
 
