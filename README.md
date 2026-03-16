@@ -7,12 +7,12 @@ This repository contains the data and analysis code used in our study on "Heat w
 The `data` folder includes:
 1. **Shapefiles**: Shapefile of Chile (cl_shp) and Japan (jp_shp).
 2. **Region Coordinates**: CSV file (Lonlat) containing the longitude and latitude of 16 Chilean regions and the longitude and latitude of 47 Japanese prefectures.
-3. **Environmental Data**: CSV file with regional environmental factors of Chile and prefectural environmental factors of Japan.
-4. **RSV Data**: We provide RSV surveillance data of 47 Japanese prefectures here. For Chilean data, access can be obtained by contacting the Public Health Institute of Chile, contact email: rfasce@ispch.cl.
+3. **Population**: Annual population data at the local level can be found in Japan Population.xlsx and Chile Population.xlsx.
+4. **Data**:  CSV files contain both regional environmental factors and RSV cases and tests of Chile and prefectural environmental factors and RSV cases of Japan. Original RSV surveillance data in 47 Japanese prefectures can be accessed here: https://id-info.jihs.go.jp/en/index.html. For original Chilean data, access can be obtained by contacting the Public Health Institute of Chile, contact email: rfasce@ispch.cl.
 
 ## Research Content
 We provide demonstrations of our research on the **Analysis** branch.
-### Main Analyses
+
 1. **Descriptive Analysis**
 Descriptive analysis was performed using the demo data, focusing on spatial and temporal trends of RSV infections and quantifying the seasonality of RSV epidemics.
 
