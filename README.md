@@ -13,15 +13,15 @@ The `data` folder includes:
 ## Research Content
 We provide demonstrations of our research on the **Analysis** branch.
 
-1. **Descriptive Analysis**
+1. **Descriptive Analysis**:
 Descriptive analysis was performed using the demo data, focusing on spatial and temporal trends of RSV infections and quantifying the seasonality of RSV epidemics.
 
-2. **Statistical Models**
+2. **Statistical Models**:
 Regression analyses examining associations between RSV infections and heat waves, cold spells, and their co-exposures with high-level PM2.5 pollution.
   
-3. **Subgroup Analyses**
+3. **Subgroup Analyses**:
 Includes detailed results from subgroup analyses conducted across different geographical groups.
 
-4. **Sensitivity Analyses**
+4. **Sensitivity Analyses**:
 Contains information on the sensitivity analyses we performed to validate the robustness of our findings.
 
