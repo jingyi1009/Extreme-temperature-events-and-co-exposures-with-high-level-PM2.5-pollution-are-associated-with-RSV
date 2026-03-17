@@ -1,0 +1,173 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+```{r}
+full_dataset <- read.csv("../Data/Chile Data.csv")
+full_dataset <- full_dataset[,-1] %>% as.data.frame()
+full_dataset <- full_dataset[,c(1:70)]
+```
+
+```{r}
+colnames(full_dataset) <- c("Region","Date","Year","Week","Total Tests","Total RSV","Test Positivity Rate","PM2.5","PM10",
+                            "SO2","O3","NO2","Max.Temp","Min.Temp","Temp.Range","Avg.Temp","Prcp","RH","WS","AP",
+                            "Heat_p99","Heat_p975","Heat_p95","Cold_p01","Cold_p025","Cold_p05","Cold_p075","Cold_p10",
+                            "RWV-SD","RWV-DTD",
+                            "p1_2d","p1_3d","p1_4d","p1_5d",
+                            "p2.5_2d","p2.5_3d","p2.5_4d","p2.5_5d",
+                            "p5_2d","p5_3d","p5_4d","p5_5d",
+                            "p7.5_2d","p7.5_3d","p7.5_4d","p7.5_5d",
+                            "p10_2d","p10_3d","p10_4d","p10_5d",
+                            "p1_2d_continuous","p1_3d_continuous","p1_4d_continuous","p1_5d_continuous",
+                            "p2.5_2d_continuous","p2.5_3d_continuous","p2.5_4d_continuous","p2.5_5d_continuous",
+                            "p5_2d_continuous","p5_3d_continuous","p5_4d_continuous","p5_5d_continuous",
+                            "p7.5_2d_continuous","p7.5_3d_continuous","p7.5_4d_continuous","p7.5_5d_continuous",
+                            "p10_2d_continuous","p10_3d_continuous","p10_4d_continuous","p10_5d_continuous")
+```
+
+```{r}
+full_dataset <- full_dataset[full_dataset$Year!=2019,] %>% as.data.frame()
+```
+
+```{r}
+population_data <- read_excel("../Data/Chile Population.xlsx",sheet=2)
+colnames(population_data) <- c("Region","2013","2014","2015","2016","2017","2018")
+population_data
+```
+
+```{r}
+population_data <- population_data %>% pivot_longer(
+  cols = -Region,
+  names_to = c("Year"),
+  values_to = "Population"
+)
+population_data
+```
+
+```{r}
+full_dataset_with_pop <- merge(full_dataset,population_data, by=c("Region","Year"))
+```
+
+## Distribution of cold spell events
+
+```{r}
+cold_spells_summary <- full_dataset_with_pop %>% group_by(Region) %>% summarize(p5_2d=sum(p5_2d),p5_3d=sum(p5_3d),p7.5_2d=sum(p7.5_2d),p7.5_3d=sum(p7.5_3d),
+                                                              p7.5_4d=sum(p7.5_4d),p10_2d=sum(p10_2d),p10_3d=sum(p10_3d),p10_4d=sum(p10_4d),p10_5d=sum(p10_5d))
+cold_spells_summary
+```
+
+```{r}
+cold_spells_summary_table <- matrix(NA,ncol=2,nrow=9)
+for (i in 1:9){
+  cold_spells_summary_table[i,1] <- cold_spells_summary[,i+1] %>% unlist() %>% mean()
+  cold_spells_summary_table[i,2] <- cold_spells_summary[,i+1] %>% unlist() %>% sd()
+}
+rownames(cold_spells_summary_table) <- c("p5(2d)","p5(3d)","p7.5(2d)","p7.5(3d)","p7.5(4d)","p10(2d)","p10(3d)","p10(4d)","p10(5d)")
+colnames(cold_spells_summary_table) <- c("Mean","SD")
+cold_spells_summary_table
+```
+## Time-series plots of average temperature and RSV in overall Chile
+
+### Nationwide time-series plots 
+
+```{r}
+nationwide_Chile <- full_dataset_with_pop %>% group_by(Date) %>% summarize(`Average Temperature(°C)`=mean(Avg.Temp),Cases=sum(`Total RSV`))
+nationwide_Chile
+```
+
+```{r}
+coeff <- 20
+TAVGColor <- "#4F81BD"
+caseColor <- "#C0504D"
+
+ggplot(nationwide_Chile, aes(x=as.Date(Date))) +
+  geom_line(aes(y=Cases/coeff,color="case"), size=1) + 
+  geom_line(aes(y=`Average Temperature(°C)`,color="TAVG"), size=1) +
+  scale_x_date(limits=c(as.Date("2015-1-1"),as.Date("2019-1-1")),
+               breaks=c(as.Date("2015-1-1"),as.Date("2016-1-1"),as.Date("2017-1-1"),as.Date("2018-1-1"),as.Date("2019-1-1")),
+               labels=c("2015-Jan","2016-Jan","2017-Jan","2018-Jan","2018-Dec")) +
+  xlab(" ")+
+  scale_color_manual(name= NULL,values = c("case" = caseColor,"TAVG"=TAVGColor),
+                     labels = c("RSV Cases","Average temperature(°C)")) +
+  scale_y_continuous(
+    name = "Weekly Mean Value",
+    sec.axis = sec_axis(~.*coeff, name="Total of Cases"),
+    limits=c(0,25),
+    breaks=seq(0,25,by=5)) +
+  theme_bw()+
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.title = element_text(size = 18,family="sans",face="bold"),
+    axis.text = element_text(size = 18,family="sans"),
+    axis.text.x = element_text(angle=45,hjust=1),
+    plot.title = element_text(size = 18,family="sans",face="bold"),
+    legend.text = element_text(size = 18,family="sans",face="bold"),
+    legend.title = element_text(size = 18,family="sans",face="bold")
+  ) 
+```
+
+### Non-linear relationship between RSV and average temperature
+
+```{r}
+full_dataset_Chile_nationwide <- full_dataset_with_pop %>% group_by(Date) %>% 
+  summarize(TAVG=mean(Avg.Temp),Cases=sum(`Total RSV`),Population=sum(Population),RH=mean(RH),PRCP=mean(Prcp),Week=mean(Week),WS=mean(WS))
+```
+
+```{r}
+cb.tavg <- crossbasis(full_dataset_Chile_nationwide$TAVG, lag=3, argvar = list(fun = "ns", df = 3),arglag = list(fun = "ns", df = 3))
+model_tavg <- gam(Cases~cb.tavg+s(Week)+ns(RH,df=3)+ns(WS,df=3),offset=log(Population),
+                  family=quasipoisson(),data=full_dataset_Chile_nationwide,method='REML',select=TRUE)
+pred_tavg <- crosspred(cb.tavg, model_tavg, by = 1, cen = quantile(full_dataset_Chile_nationwide$TAVG,0.5),cumul=TRUE)
+results_tavg <- data.frame(temp = pred_tavg$predvar,rr = pred_tavg$allRRfit,rr_low = pred_tavg$allRRlow,rr_high = pred_tavg$allRRhigh)
+```
+
+```{r}
+# lag 03 response curve
+ggplot(results_tavg, aes(x = temp, y = rr)) +
+  geom_line(color = "#2B547E",lwd=1) +
+  geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.2,fill="#4582B4") +
+  geom_vline(xintercept = quantile(full_dataset_Chile_nationwide$TAVG,0.5), color = "red", alpha=0.4,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_Chile_nationwide$TAVG,0.5)+1, y = 6, label = "50th (ref)",size=5)+
+  geom_vline(xintercept = quantile(full_dataset_Chile_nationwide$TAVG,0.75), color = "#36454F", alpha=0.6,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_Chile_nationwide$TAVG,0.75)+0.6, y = 6, label = "75th",size=5)+
+  geom_vline(xintercept = quantile(full_dataset_Chile_nationwide$TAVG,0.9), color = "#36454F", alpha=0.6,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_Chile_nationwide$TAVG,0.9)+0.6, y = 6, label = "90th",size=5)+
+  geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+  scale_y_continuous(limits=c(0,6),breaks=seq(0,6,1))+
+  labs(x = "Average Temperature (°C)", y = "Relative Risk",title = " ") +
+  scale_x_continuous(limits=c(8,22),breaks=seq(8,22,by=2))+
+  theme_classic()+
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        axis.title = element_text(size = 18,family="sans",face="bold"),
+        plot.title = element_text(size = 18,family="sans",face="bold"),
+        axis.text = element_text(size = 18,family="sans"),
+        legend.text = element_text(size = 18,family="sans"),
+        legend.title = element_text(size = 18,family="sans",face="bold"))
+```

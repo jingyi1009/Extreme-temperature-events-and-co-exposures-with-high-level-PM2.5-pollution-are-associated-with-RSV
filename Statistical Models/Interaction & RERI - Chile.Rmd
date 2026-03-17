@@ -1,0 +1,616 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+```{r}
+full_dataset <- read.csv("../Data/Chile Data.csv")
+full_dataset <- full_dataset[,-1] %>% as.data.frame()
+```
+
+```{r}
+colnames(full_dataset) <- c("Region","Date","Year","Week","Total Tests","Total RSV","Test Positivity Rate","PM2.5","PM10",
+                            "SO2","O3","NO2","Max.Temp","Min.Temp","Temp.Range","Avg.Temp","Prcp","RH","WS","AP",
+                            "Heat_p99","Heat_p975","Heat_p95","Cold_p01","Cold_p025","Cold_p05","Cold_p075","Cold_p10",
+                            "RWV-SD","RWV-DTD",
+                            "p1_2d","p1_3d","p1_4d","p1_5d",
+                            "p2.5_2d","p2.5_3d","p2.5_4d","p2.5_5d",
+                            "p5_2d","p5_3d","p5_4d","p5_5d",
+                            "p7.5_2d","p7.5_3d","p7.5_4d","p7.5_5d",
+                            "p10_2d","p10_3d","p10_4d","p10_5d",
+                            "p1_2d_continuous","p1_3d_continuous","p1_4d_continuous","p1_5d_continuous",
+                            "p2.5_2d_continuous","p2.5_3d_continuous","p2.5_4d_continuous","p2.5_5d_continuous",
+                            "p5_2d_continuous","p5_3d_continuous","p5_4d_continuous","p5_5d_continuous",
+                            "p7.5_2d_continuous","p7.5_3d_continuous","p7.5_4d_continuous","p7.5_5d_continuous",
+                            "p10_2d_continuous","p10_3d_continuous","p10_4d_continuous","p10_5d_continuous",
+                            "joint_p025_p95_2d","joint_p05_p95_2d","joint_p075_p95_2d","joint_p10_p95_2d",
+                            "joint_p025_p90_2d","joint_p05_p90_2d","joint_p075_p90_2d","joint_p10_p90_2d",
+                            "joint_p025_p80_2d","joint_p05_p80_2d","joint_p075_p80_2d","joint_p10_p80_2d",
+                            "joint_p025_p70_2d","joint_p05_p70_2d","joint_p075_p70_2d","joint_p10_p70_2d",
+                            "joint_p025_p60_2d","joint_p05_p60_2d","joint_p075_p60_2d","joint_p10_p60_2d",
+                            "joint_p025_p50_2d","joint_p05_p50_2d","joint_p075_p50_2d","joint_p10_p50_2d",
+                            "joint_p025_p95_2d_v2","joint_p05_p95_2d_v2","joint_p075_p95_2d_v2","joint_p10_p95_2d_v2",
+                            "joint_p025_p90_2d_v2","joint_p05_p90_2d_v2","joint_p075_p90_2d_v2","joint_p10_p90_2d_v2",
+                            "joint_p025_p80_2d_v2","joint_p05_p80_2d_v2","joint_p075_p80_2d_v2","joint_p10_p80_2d_v2",
+                            "joint_p025_p70_2d_v2","joint_p05_p70_2d_v2","joint_p075_p70_2d_v2","joint_p10_p70_2d_v2",
+                            "joint_p025_p60_2d_v2","joint_p05_p60_2d_v2","joint_p075_p60_2d_v2","joint_p10_p60_2d_v2",
+                            "joint_p025_p50_2d_v2","joint_p05_p50_2d_v2","joint_p075_P50_2d_v2","joint_p10_p50_2d_v2",
+                            "excess_pm25_p95_2d","excess_pm25_p90_2d","excess_pm25_p80_2d","excess_pm25_p70_2d")
+```
+
+```{r}
+full_dataset <- full_dataset[full_dataset$Year!=2019,] %>% as.data.frame()
+```
+
+```{r}
+population_data <- read_excel("../Data/Chile Population.xlsx",sheet=2)
+colnames(population_data) <- c("Region","2013","2014","2015","2016","2017","2018")
+population_data
+```
+
+```{r}
+population_data <- population_data %>% pivot_longer(
+  cols = -Region,
+  names_to = c("Year"),
+  values_to = "Population"
+)
+population_data
+```
+
+```{r}
+full_dataset_with_pop <- merge(full_dataset,population_data, by=c("Region","Year"))
+```
+
+```{r}
+Chile <- st_read('../Data/cl_shp/cl.shp')
+Chile <- as(Chile, "Spatial")
+```
+
+```{r}
+nb_rook <- poly2nb(Chile,queen = FALSE,row.names = Chile$name) 
+listw <- nb2listw(nb_rook)
+coords <- coordinates(Chile)
+ 
+dlist <- nbdists(nb_rook, coords[,c(1,2)], longlat = T)
+dlist_p1 <- lapply(dlist, function(x) 1/x)
+dlist_p2 <- lapply(dlist, function(x) 1/(x*x))
+
+w_mat <- nb2listw(nb_rook,zero.policy=TRUE)
+w_mat_d <- nb2listw(nb_rook, glist=dlist, zero.policy=TRUE)
+w_mat_d_p1 <- nb2listw(nb_rook, glist=dlist_p1, zero.policy=TRUE)
+w_mat_d_p2 <- nb2listw(nb_rook, glist=dlist_p2, zero.policy=TRUE)
+```
+
+```{r}
+matrix_list <- listw2mat(w_mat_d_p2)
+colnames(matrix_list) <- c("Arica","Tarapaca","Antofagasta","Atacama","Coquimbo","Metropolitana.de.Santiago",
+                           "Valparaiso","Maule","O.Higgins","Nuble","La.Araucania","Biobio","Los.Rios","Los.Lagos",
+                           "Aysen","Magallanes")
+rownames(matrix_list) <- colnames(matrix_list)
+```
+
+## Interaction: PM2.5 and cold spells
+
+```{r}
+region_list <- heat_joint_data[(heat_joint_data$joint_p975_p90_2d>=1)&(heat_joint_data$joint_p95_p90_2d>=1),"NAME_1"]
+region_list <- unlist(region_list)
+length(region_list)
+```
+
+```{r}
+heat_joint_data[(heat_joint_data$joint_p975_p90_2d<1)&(heat_joint_data$joint_p95_p90_2d<1),"NAME_1"]
+region_list <- heat_joint_data[heat_joint_data$joint_p95_p90_2d>=1,"NAME_1"]
+region_list <- unlist(region_list)
+length(region_list)
+```
+
+## Interaction model
+
+```{r}
+region_list <- c("Antofagasta","Atacama","Aysen","Biobio","Coquimbo","La.Araucania","Los.Lagos","Los.Rios","Maule",
+                 "Metropolitana.de.Santiago","Nuble","O.Higgins","Valparaiso")
+```
+
+```{r}
+for (i in 1:length(region_list)){
+  region_data <- full_dataset_with_pop[full_dataset_with_pop$Region==region_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==region_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset_with_pop[full_dataset_with_pop$Region==names(neighbours_weight)[j],"Total RSV"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$Week)
+  region_data2$Pop <- as.numeric(region_data2$Population)
+  region_data2$Case <- region_data2$`Total RSV`
+  
+  cb.interaction_p10_p95_2d <- crossbasis(region_data2$joint_p10_p95_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+
+  cb.interaction_p05_p90_2d <- crossbasis(region_data2$joint_p05_p90_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p075_p90_2d <- crossbasis(region_data2$joint_p075_p90_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p10_p90_2d <- crossbasis(region_data2$joint_p10_p90_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+
+  cb.interaction_p05_p80_2d <- crossbasis(region_data2$joint_p05_p80_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p075_p80_2d <- crossbasis(region_data2$joint_p075_p80_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p10_p80_2d <- crossbasis(region_data2$joint_p10_p80_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.interaction_p05_p70_2d <- crossbasis(region_data2$joint_p05_p70_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p075_p70_2d <- crossbasis(region_data2$joint_p075_p70_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.interaction_p10_p70_2d <- crossbasis(region_data2$joint_p10_p70_2d,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_interaction_p10_p95_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p10_p95_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p05_p90_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p075_p90_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_interaction_p10_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p10_p90_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p05_p80_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p075_p80_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_interaction_p10_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p10_p80_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p05_p70_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p075_p70_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_interaction_p10_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) +ns(PM2.5,df=3)+
+                                                                cb.interaction_p10_p70_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  else{
+    uni_st_interaction_p10_p95_2d_model <- gam(Case~cb.interaction_p10_p95_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p90_2d_model <- gam(Case~cb.interaction_p05_p90_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p90_2d_model <- gam(Case~cb.interaction_p075_p90_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p90_2d_model <- gam(Case~cb.interaction_p10_p90_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p80_2d_model <- gam(Case~cb.interaction_p05_p80_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p80_2d_model <- gam(Case~cb.interaction_p075_p80_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p80_2d_model <- gam(Case~cb.interaction_p10_p80_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p70_2d_model <- gam(Case~cb.interaction_p05_p70_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p70_2d_model <- gam(Case~cb.interaction_p075_p70_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p70_2d_model <- gam(Case~cb.interaction_p10_p70_2d+s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  interaction_p10_p95_2d <- crosspred(cb.interaction_p10_p95_2d,uni_st_interaction_p10_p95_2d_model,cen=0,cumul=TRUE,by=1)
+  
+  interaction_p05_p90_2d <- crosspred(cb.interaction_p05_p90_2d,uni_st_interaction_p05_p90_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p075_p90_2d <- crosspred(cb.interaction_p075_p90_2d,uni_st_interaction_p075_p90_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p10_p90_2d <- crosspred(cb.interaction_p10_p90_2d,uni_st_interaction_p10_p90_2d_model,cen=0,cumul=TRUE,by=1)
+  
+  interaction_p05_p80_2d <- crosspred(cb.interaction_p05_p80_2d,uni_st_interaction_p05_p80_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p075_p80_2d <- crosspred(cb.interaction_p075_p80_2d,uni_st_interaction_p075_p80_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p10_p80_2d <- crosspred(cb.interaction_p10_p80_2d,uni_st_interaction_p10_p80_2d_model,cen=0,cumul=TRUE,by=1)
+  
+  interaction_p05_p70_2d <- crosspred(cb.interaction_p05_p70_2d,uni_st_interaction_p05_p70_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p075_p70_2d <- crosspred(cb.interaction_p075_p70_2d,uni_st_interaction_p075_p70_2d_model,cen=0,cumul=TRUE,by=1)
+  interaction_p10_p70_2d <- crosspred(cb.interaction_p10_p70_2d,uni_st_interaction_p10_p70_2d_model,cen=0,cumul=TRUE,by=1)
+}
+```
+
+## RERI
+
+```{r}
+full_dataset_with_pop <- full_dataset_with_pop %>% mutate(
+                                          `joint_p075_p95_2d_binary`=ifelse(joint_p075_p95_2d>0,1,0),
+                                          `joint_p10_p95_2d_binary`=ifelse(joint_p10_p95_2d>0,1,0),
+                                          
+                                          `joint_p05_p90_2d_binary`=ifelse(joint_p05_p90_2d>0,1,0),
+                                          `joint_p075_p90_2d_binary`=ifelse(joint_p075_p90_2d>0,1,0),
+                                          `joint_p10_p90_2d_binary`=ifelse(joint_p10_p90_2d>0,1,0),
+                                          
+                                          `joint_p05_p80_2d_binary`=ifelse(joint_p05_p80_2d>0,1,0),
+                                          `joint_p075_p80_2d_binary`=ifelse(joint_p075_p80_2d>0,1,0),
+                                          `joint_p10_p80_2d_binary`=ifelse(joint_p10_p80_2d>0,1,0),
+                                          
+                                          `joint_p05_p70_2d_binary`=ifelse(joint_p05_p70_2d>0,1,0),
+                                          `joint_p075_p70_2d_binary`=ifelse(joint_p075_p70_2d>0,1,0),
+                                          `joint_p10_p70_2d_binary`=ifelse(joint_p10_p70_2d>0,1,0))
+```
+
+```{r}
+region_list <- c("Antofagasta","Atacama","Aysen","Biobio","Coquimbo","La.Araucania","Los.Lagos","Los.Rios","Maule",
+                 "Metropolitana.de.Santiago","Nuble","O.Higgins","Valparaiso")
+```
+     
+```{r}
+calculate_RERI_metrics <- function(interaction_model,factor1,factor2,interaction){
+  result = summary(interaction_model)
+  RERI_interaction = (exp(coef(interaction_model)[interaction])-1)-
+    (exp(coef(interaction_model)[factor1])-1)-(exp(coef(interaction_model)[factor2])-1)
+  h1 = -exp(coef(interaction_model)[factor1])
+  h2 = -exp(coef(interaction_model)[factor2])
+  h3 = exp(coef(interaction_model)[interaction])
+  sigma13 = vcov(interaction_model)[factor1,interaction]
+  sigma23 = vcov(interaction_model)[factor2,interaction]
+  sigma12 = vcov(interaction_model)[factor1,factor2]
+  sigma1 = result$se[factor1]
+  sigma2 = result$se[factor2]
+  sigma3 = result$se[interaction]
+  var = (h1)^2*(sigma1)^2+(h2)^2*(sigma2)^2+(h3)^2*(sigma3)^2+2*h1*h3*sigma13+2*h1*h2*sigma12+2*h2*h3*sigma23
+  se = sqrt(var)
+  return(c(RERI_interaction,se,RERI_interaction-1.96*se,RERI_interaction+1.96*se))
+}
+```
+
+```{r}
+interaction_matrix_p10_p95_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+interaction_matrix_p05_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p075_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p10_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+interaction_matrix_p05_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p075_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p10_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+interaction_matrix_p05_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p075_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+interaction_matrix_p10_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+for (i in 1:length(region_list)){
+  region_data <- full_dataset_with_pop[full_dataset_with_pop$Region==region_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==region_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset_with_pop[full_dataset_with_pop$Region==names(neighbours_weight)[j],"Total RSV"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$Week)
+  region_data2$Pop <- as.numeric(region_data2$Population)
+  region_data2$Case <- region_data2$`Total RSV`
+
+  region_data2 <- region_data2 %>% mutate(`excess_pm25_p95_2d_binary`=ifelse(excess_pm25_p95_2d>0,1,0),
+                                          `excess_pm25_p90_2d_binary`=ifelse(excess_pm25_p90_2d>0,1,0),
+                                          `excess_pm25_p80_2d_binary`=ifelse(excess_pm25_p80_2d>0,1,0),
+                                          `excess_pm25_p70_2d_binary`=ifelse(excess_pm25_p70_2d>0,1,0))
+  
+  if(length(neighbours_weight)>=1){
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+
+    uni_st_interaction_p10_p95_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p10_p95_2d_binary+excess_pm25_p95_2d_binary+p10_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p05_p90_2d_binary+excess_pm25_p90_2d_binary+p5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p075_p90_2d_binary+excess_pm25_p90_2d_binary+p7.5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p10_p90_2d_binary+excess_pm25_p90_2d_binary+p10_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p05_p80_2d_binary+excess_pm25_p80_2d_binary+p5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p075_p80_2d_binary+excess_pm25_p80_2d_binary+p7.5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p10_p80_2d_binary+excess_pm25_p80_2d_binary+p10_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p05_p70_2d_binary+excess_pm25_p70_2d_binary+p5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p075_p70_2d_binary+excess_pm25_p70_2d_binary+p7.5_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(Avg.Temp,df=3) + ns(RH,df=3) + ns(WS,df=3) + ns(PM2.5,df=3)+
+                                                                joint_p10_p70_2d_binary+excess_pm25_p70_2d_binary+p10_2d")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  else{
+    uni_st_interaction_p10_p95_2d_model <- gam(Case~joint_p10_p95_2d_binary+excess_pm25_p95_2d_binary+p10_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p90_2d_model <- gam(Case~joint_p05_p90_2d_binary+excess_pm25_p90_2d_binary+p5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p90_2d_model <- gam(Case~joint_p075_p90_2d_binary+excess_pm25_p90_2d_binary+p7.5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p90_2d_model <- gam(Case~joint_p10_p80_2d_binary+excess_pm25_p90_2d_binary+p10_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p80_2d_model <- gam(Case~joint_p05_p80_2d_binary+excess_pm25_p80_2d_binary+p5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p80_2d_model <- gam(Case~joint_p075_p80_2d_binary+excess_pm25_p80_2d_binary+p7.5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p80_2d_model <- gam(Case~joint_p10_p80_2d_binary+excess_pm25_p80_2d_binary+p10_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p05_p70_2d_model <- gam(Case~joint_p05_p70_2d_binary+excess_pm25_p70_2d_binary+p5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p075_p70_2d_model <- gam(Case~joint_p075_p70_2d_binary+excess_pm25_p70_2d_binary+p7.5_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_interaction_p10_p70_2d_model <- gam(Case~joint_p10_p70_2d_binary+excess_pm25_p70_2d_binary+p10_2d+
+                                                 s(Week)+ns(Avg.Temp,df=3)+ns(RH,df=3)+ns(WS,df=3)+ns(PM2.5,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  interaction_matrix_p10_p95_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p10_p95_2d_model,
+                                                              "excess_pm25_p95_2d_binary","p10_2d","joint_p10_p95_2d_binary")
+  
+  interaction_matrix_p05_p90_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p05_p90_2d_model,
+                                                              "excess_pm25_p90_2d_binary","p5_2d","joint_p05_p90_2d_binary")
+  interaction_matrix_p075_p90_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p075_p90_2d_model,
+                                                              "excess_pm25_p90_2d_binary","p7.5_2d","joint_p075_p90_2d_binary")
+  interaction_matrix_p10_p90_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p10_p90_2d_model,
+                                                              "excess_pm25_p90_2d_binary","p10_2d","joint_p10_p90_2d_binary")
+  
+  interaction_matrix_p05_p80_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p05_p80_2d_model,
+                                                              "excess_pm25_p80_2d_binary","p5_2d","joint_p05_p80_2d_binary")
+  interaction_matrix_p075_p80_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p075_p80_2d_model,
+                                                              "excess_pm25_p80_2d_binary","p7.5_2d","joint_p075_p80_2d_binary")
+  interaction_matrix_p10_p80_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p10_p80_2d_model,
+                                                              "excess_pm25_p80_2d_binary","p10_2d","joint_p10_p80_2d_binary")
+  
+  interaction_matrix_p05_p70_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p05_p70_2d_model,
+                                                              "excess_pm25_p70_2d_binary","p5_2d","joint_p05_p70_2d_binary")
+  interaction_matrix_p075_p70_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p075_p70_2d_model,
+                                                              "excess_pm25_p70_2d_binary","p7.5_2d","joint_p075_p70_2d_binary")
+  interaction_matrix_p10_p70_2d[i,] <- calculate_RERI_metrics(uni_st_interaction_p10_p70_2d_model,
+                                                              "excess_pm25_p70_2d_binary","p10_2d","joint_p10_p70_2d_binary")
+  print(i)
+}
+```
+
+```{r}
+RERI_matrix_p95_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p95_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p95_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+RERI_matrix_p925_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p925_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p925_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+RERI_matrix_p90_p90_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p90_p80_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+RERI_matrix_p90_p70_2d <- matrix(NA,ncol=4,nrow=length(region_list))
+
+for (i in 1:length(region_list)){
+  region_data <- full_dataset[full_dataset$NAME_1==region_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==region_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Pop <- as.numeric(region_data2$Population)
+  region_data2$Case <- region_data2$`Cases`
+  
+  region_data2 <- region_data2 %>% mutate(excess_pm25_p90_2d_binary=ifelse(excess_pm25_p90_2d>0,1,0),
+                                          excess_pm25_p80_2d_binary=ifelse(excess_pm25_p80_2d>0,1,0),
+                                          excess_pm25_p70_2d_binary=ifelse(excess_pm25_p70_2d>0,1,0))
+  
+  if(length(neighbours_weight)>=1){
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+
+    uni_st_RERI_p95_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p95_p90_2d_binary+excess_pm25_p90_2d_binary+p95_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p95_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+ joint_p95_p80_2d_binary+excess_pm25_p80_2d_binary+p95_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_RERI_p95_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p95_p70_2d_binary+excess_pm25_p70_2d_binary+p95_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p925_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p925_p90_2d_binary+excess_pm25_p90_2d_binary+p92.5_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p925_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+ joint_p925_p80_2d_binary+excess_pm25_p80_2d_binary+p92.5_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_RERI_p925_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p925_p70_2d_binary+excess_pm25_p70_2d_binary+p92.5_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    
+    uni_st_RERI_p90_p90_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p90_p90_2d_binary+excess_pm25_p90_2d_binary+p90_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p90_p80_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+ joint_p90_p80_2d_binary+excess_pm25_p80_2d_binary+p90_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+        
+    uni_st_RERI_p90_p70_2d_model <- gam(as.formula(paste("Case ~",neighbour_list,"+s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + ns(PRCP,df=3)+
+    ns(wind.speed,df=3) + ns(PM25,df=3)+joint_p90_p70_2d_binary+excess_pm25_p70_2d_binary+p90_2d_binary")),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  else{
+
+    uni_st_RERI_p95_p90_2d_model <- gam(Case~joint_p95_p90_2d_binary+excess_pm25_p90_2d_binary+p95_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_RERI_p95_p80_2d_model <- gam(Case~joint_p95_p80_2d_binary+excess_pm25_p80_2d_binary+p95_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p95_p70_2d_model <- gam(Case~joint_p95_p70_2d_binary+excess_pm25_p70_2d_binary+p95_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    
+    uni_st_RERI_p925_p90_2d_model <- gam(Case~joint_p925_p90_2d_binary+excess_pm25_p90_2d_binary+p92.5_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_RERI_p925_p80_2d_model <- gam(Case~joint_p925_p80_2d_binary+excess_pm25_p80_2d_binary+p92.5_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p925_p70_2d_model <- gam(Case~joint_p925_p70_2d_binary+excess_pm25_p70_2d_binary+p92.5_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    
+    uni_st_RERI_p90_p90_2d_model <- gam(Case~joint_p90_p90_2d_binary+excess_pm25_p90_2d_binary+p90_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_RERI_p90_p80_2d_model <- gam(Case~joint_p90_p80_2d_binary+excess_pm25_p80_2d_binary+p90_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_RERI_p90_p70_2d_model <- gam(Case~joint_p90_p70_2d_binary+excess_pm25_p70_2d_binary+p90_2d_binary+ns(PRCP,df=3)+
+                                                 s(Week)+ns(TAVG,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+ns(PM25,df=3),
+                                               offset=log(Pop),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  RERI_matrix_p95_p90_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p95_p90_2d_model,
+                                                        "excess_pm25_p90_2d_binary","p95_2d_binary","joint_p95_p90_2d_binary")
+  RERI_matrix_p95_p80_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p95_p80_2d_model,
+                                                        "excess_pm25_p80_2d_binary","p95_2d_binary","joint_p95_p80_2d_binary")
+  RERI_matrix_p95_p70_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p95_p70_2d_model,
+                                                        "excess_pm25_p70_2d_binary","p95_2d_binary","joint_p95_p70_2d_binary")
+  
+  RERI_matrix_p925_p90_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p925_p90_2d_model,
+                                                        "excess_pm25_p90_2d_binary","p92.5_2d_binary","joint_p925_p90_2d_binary")
+  RERI_matrix_p925_p80_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p925_p80_2d_model,
+                                                        "excess_pm25_p80_2d_binary","p92.5_2d_binary","joint_p925_p80_2d_binary")
+  RERI_matrix_p925_p70_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p925_p70_2d_model,
+                                                        "excess_pm25_p70_2d_binary","p92.5_2d_binary","joint_p925_p70_2d_binary")
+  
+  RERI_matrix_p90_p90_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p90_p90_2d_model,
+                                                        "excess_pm25_p90_2d_binary","p90_2d_binary","joint_p90_p90_2d_binary")
+  RERI_matrix_p90_p80_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p90_p80_2d_model,
+                                                        "excess_pm25_p80_2d_binary","p90_2d_binary","joint_p90_p80_2d_binary")
+  RERI_matrix_p90_p70_2d[i,] <- calculate_RERI_metrics(uni_st_RERI_p90_p70_2d_model,
+                                                        "excess_pm25_p70_2d_binary","p90_2d_binary","joint_p90_p70_2d_binary")
+}
+```
+
+
+
+

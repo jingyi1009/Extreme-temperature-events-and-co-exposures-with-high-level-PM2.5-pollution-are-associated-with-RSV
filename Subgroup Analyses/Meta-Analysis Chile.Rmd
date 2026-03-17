@@ -1,0 +1,187 @@
+---
+title: "Meta-Analysis Univariate Model"
+output: html_document
+date: "2024-10-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(metafor)
+library(meta)
+library(mgcv)
+library(grid)
+library(forestplot)
+library(tidyverse)
+library(readxl)
+```
+
+## Load result file
+
+### Cold spells
+
+```{r}
+univariate_st_pop_cold_spells_result <- read.csv("../Results/Chile_st_cumul_cold_spells.csv")
+univariate_st_pop_cold_spells_result <- univariate_st_pop_cold_spells_result[,-1] %>% as.data.frame()
+colnames(univariate_st_pop_cold_spells_result) <- c("Est.Lag3","2.5-Lag3","97.5-Lag3","SE","Factor","Region")
+```
+
+## Meta-Analysis Overall
+
+```{r}
+meta_analysis_overall <- function(main_factor,dataset){
+   meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR",  
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML",
+                           control = list(stepadj = 0.2))
+  return(c(exp(meta_analysis$TE.random),exp(meta_analysis$lower.random),exp(meta_analysis$upper.random),meta_analysis$pval.Q))
+}
+```
+
+### Cold Spells
+
+```{r}
+cold_spells <- unique(univariate_st_pop_cold_spells_result$Factor)[-1]
+```
+
+```{r}
+overall_meta_result_uni_st_pop_cold_spells <- matrix(NA,ncol=4,nrow=9)
+for (i in 1:9){
+   overall_meta_result_uni_st_pop_cold_spells[i,] <- meta_analysis_overall(main_factor=cold_spells[i],dataset=univariate_st_pop_cold_spells_result)
+}
+overall_meta_result_uni_st_pop_cold_spells <- overall_meta_result_uni_st_pop_cold_spells %>% as.data.frame()
+colnames(overall_meta_result_uni_st_pop_cold_spells) <- c("smd","ci.lb","ci.ub","pval")
+rownames(overall_meta_result_uni_st_pop_cold_spells) <- cold_spells 
+overall_meta_result_uni_st_pop_cold_spells
+```
+
+## Meta-Regression
+
+```{r}
+full_data <- read.csv("../Data/Chile Data.csv")
+(annual_data <- full_data %>% group_by(Region) %>% summarize(PM2.5=mean(PM2.5),PM10=mean(PM10),
+                                                            NO2=mean(NO2),O3=mean(O3),
+                                                            AverageTemperature=mean(Avg.Temp),MaximumTemperature=mean(Max.Temp),
+                                                            MinimumTemperature=mean(Min.Temp),Precipitation=mean(Prcp),
+                                                            RelativeHumidity=mean(RH),
+                                                            WindSpeed=mean(WS)))
+```
+
+```{r}
+meta_regression_moderator <- function(main_factor,moderator,dataset){
+  moderator <- as.formula(paste0("~",moderator))
+  metareg <- rma(yi=log(Est.Lag3),sei = SE / Est.Lag3,mods=moderator,
+                 data=dataset[dataset$Factor==main_factor,],method="REML")
+  result <- summary(metareg)
+  result_df <- c(Coefficients = round(result$beta[2,1],4),SE = round(result$se[2],4),
+                 Z_value = round(result$zval[2],4),
+                 P_value = round(result$pval[2],4),CI = paste0("(",round(result$ci.lb[2],4),"-",round(result$ci.ub[2],4),")"))
+  return(result_df)
+}
+```
+
+### Cold Spells
+
+```{r}
+univariate_st_pop_cold_spells_result2 <- univariate_st_pop_cold_spells_result
+colnames(univariate_st_pop_cold_spells_result2)[6] <- c("Region")
+univariate_cold_spell_result2 <- merge(univariate_st_pop_cold_spells_result2,annual_data,by="Region")
+```
+
+```{r}
+main_cold_spell <- unique(univariate_cold_spell_result2$Factor)[-1]
+moderator <- c("PM2.5","PM10","NO2","O3","AverageTemperature","MaximumTemperature",
+               "MinimumTemperature","Precipitation","RelativeHumidity","WindSpeed")
+```
+
+```{r}
+metareg_result_cold_spell <- matrix(NA,ncol=5,nrow=9*10)
+rowname_cold_spell <- list(NULL)
+for (i in 1:9){
+  for (j in 1:10){
+    index <- (i-1)*10+j
+    metareg_result_cold_spell[index,] <- meta_regression_moderator(main_factor=main_cold_spell[i],
+                                                                    moderator=moderator[j],
+                                                                    dataset=univariate_cold_spell_result2)
+    rowname <- paste0(main_cold_spell[i],":",moderator[j])
+    rowname_cold_spell <- c(rowname_cold_spell,rowname)
+  }
+}
+```
+
+```{r}
+colnames(metareg_result_cold_spell) <- c("estimate","se","zval","pval","95% CI")
+rownames(metareg_result_cold_spell) <- unlist(rowname_cold_spell)
+(metareg_result_cold_spell <- metareg_result_cold_spell %>% as.data.frame())
+```
+
+```{r}
+(metareg_sig_cold_spell_result <- metareg_result_cold_spell[as.numeric(metareg_result_cold_spell$pval)<0.05,])
+```
+
+## Subgroup Analysis
+
+```{r}
+lonlat <- read.csv("../Data/Chile LonLat.csv")
+lonlat <- lonlat %>% mutate(Natural_Area2=ifelse(Latitude>-35,"North","South"))
+lonlat <- lonlat %>% mutate(Natural_Area3=ifelse(Latitude>-30,"North",
+                                        ifelse((Latitude>-35)&(-30>Latitude),"Central","South")))
+lonlat
+```
+
+```{r}
+colnames(lonlat) <- c("Region","Latitude","Longitude","GDP","2 Area","3 Area")
+lonlat <- lonlat %>% mutate(Region=ifelse(Region=="BioBio","Biobio",
+                                          ifelse(Region=="O'Higgins","O.Higgins",Region)))
+```
+
+```{r}
+univariate_st_pop_cold_spells_result3 <- merge(univariate_st_pop_cold_spells_result,lonlat,by="Region")
+univariate_st_pop_cold_spells_result3$`3 Area` <- factor(univariate_st_pop_cold_spells_result3$`3 Area`,levels=c("North","Central","South"))
+univariate_st_pop_cold_spells_result3
+```
+
+```{r}
+subgroup_climate <- function(main_factor,dataset){
+  meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR", 
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML")
+  meta_analysis_subgroup <- update(meta_analysis, 
+                                   subgroup = dataset[dataset$Factor==main_factor,"3 Area"],tau.common = FALSE)
+  result <- t(rbind(round(exp(meta_analysis_subgroup$TE.random.w),2),round(exp(meta_analysis_subgroup$lower.random.w),2),
+                    round(exp(meta_analysis_subgroup$upper.random.w),2),round(meta_analysis_subgroup$I2.w,2)))
+  result <- cbind(result,paste0("(",round(exp(meta_analysis_subgroup$lower.random.w),2),",",round(exp(meta_analysis_subgroup$upper.random.w),2),")"))
+  result <- cbind(result,c(NA,NA,meta_analysis_subgroup$pval.Q.b.random))
+  return(result)
+}
+```
+
+```{r}
+cold_spells <- c("p5_2d","p5_3d","p7.5_2d","p7.5_3d","p7.5_4d","p10_2d","p10_3d","p10_4d","p10_5d")
+```
+
+```{r}
+Climate_meta_result <- matrix(NA,ncol=6,nrow=9*3)
+for (i in 1:9){
+   Climate_meta_result[((i-1)*3+1):(i*3),] <- subgroup_climate(main_factor=cold_spells[i],
+                                                               dataset=univariate_st_pop_cold_spells_result3)
+}
+
+Climate_meta_result <- Climate_meta_result %>% as.data.frame()
+colnames(Climate_meta_result) <- c("smd","ci.lb","ci.ub","I2","95% CI","pval")
+rownames(Climate_meta_result) <- c(paste(cold_spells[1]," Q",1:3, sep=""),paste(cold_spells[2]," Q",1:3, sep=""),
+                                    paste(cold_spells[3]," Q",1:3, sep=""),paste(cold_spells[4]," Q",1:3, sep=""),
+                                    paste(cold_spells[5]," Q",1:3, sep=""),paste(cold_spells[6]," Q",1:3, sep=""),
+                                    paste(cold_spells[7]," Q",1:3, sep=""),paste(cold_spells[8]," Q",1:3, sep=""),
+                                    paste(cold_spells[9]," Q",1:3, sep=""))
+Climate_meta_result
+```

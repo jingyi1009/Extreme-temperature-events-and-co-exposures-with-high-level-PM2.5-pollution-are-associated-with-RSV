@@ -1,0 +1,196 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+```{r}
+full_dataset <- read.csv("../Data/Japan Data.csv")
+full_dataset <- full_dataset %>% as.data.frame()
+```
+
+```{r}
+population_data <- read_excel("../Data/Japan Population.xlsx",sheet=1)
+colnames(population_data) <- c("NAME_1","Population","Year")
+```
+
+```{r}
+full_dataset <- merge(full_dataset, population_data, by=c("NAME_1","Year"),all.x=TRUE) 
+```
+
+## Define covariates and check model assumption
+
+### Correlations between extreme temperature events and RSV cases
+
+```{r}
+cor_data <- full_dataset[,c(18,46,50,51,54:56,58:61,82,86:88,90:93)]
+cor_data
+```
+
+```{r}
+# corr with test positive
+corr_test_positive <- round(cor(cor_data,method="spearman"), 1)
+p.mat <- cor_pmat(corr_test_positive)
+ggcorrplot(corr_test_positive,
+           hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           p.mat = p.mat,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 18,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+p.mat
+```
+
+### Cold Spells: Spearman tests to exmaine the correlations
+
+```{r}
+cor_data2 <- full_dataset[,c(5,8,9,10,11,14,15,50,51,54:56,58:61)]
+colnames(cor_data2) <- c("Relative Humidity","Visibility","Wind Speed","Precipitation","Average Temperature","PM2.5","NO2","P5(2d)","P5(3d)","P7.5(2d)",
+                         "P7.5(3d)","P7.5(4d)","P10(2d)","P10(3d)","P10(4d)","P10(5d)")
+```
+
+```{r}
+corr_test_positive2 <- round(cor(cor_data2,method="spearman"), 1)
+p.mat2 <- cor_pmat(corr_test_positive2)
+p <- ggcorrplot(corr_test_positive2,
+           #hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           #p.mat = p.mat2,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 16,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+p
+```
+
+### Heat Waves: Spearman tests to exmaine the correlations
+
+```{r}
+cor_data3 <- full_dataset[,c(5,8,9,10,11,14,15,86:87,90:91,94:96,98:101)]
+colnames(cor_data3) <- c("Relative Humidity","Visibility","Wind Speed","Precipitation","Average Temperature","PM2.5","NO2","P97.5(2d)","P97.5(3d)","P95(2d)",
+                         "P95(3d)","P92.5(2d)","P92.5(3d)","P92.5(4d)","P90(2d)","P90(3d)","P90(4d)","P90(5d)")
+```
+
+```{r}
+corr_test_positive3 <- round(cor(cor_data3,method="spearman"), 1)
+p.mat3 <- cor_pmat(corr_test_positive3)
+p2 <- ggcorrplot(corr_test_positive3,
+           #hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           #p.mat = p.mat2,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 16,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+p2
+```
+### RSV cases and covariates
+  
+```{r}
+# cold spells
+corr_test_positive_cold_spells <- round(cor(full_dataset[,c(5:18)],method="spearman"), 1)
+p.mat <- cor_pmat(corr_test_positive_cold_spells)
+ggcorrplot(corr_test_positive_cold_spells,
+           hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           p.mat = p.mat,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 18,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+p.mat
+```
+
+### Examine collinearity
+
+```{r}
+library(car)
+var_list <- c("p5_2d_continuous","p5_3d_continuous","p7.5_2d_continuous","p7.5_3d_continuous","p7.5_4d_continuous",
+              "p10_2d_continuous","p10_3d_continuous","p10_4d_continuous","p10_5d_continuous",
+              "p97.5_2d_continuous","p97.5_3d_continuous","p95_2d_continuous","p95_3d_continuous",
+              "p92.5_2d_continuous","p92.5_3d_continuous","p92.5_4d_continuous",
+              "p90_2d_continuous","p90_3d_continuous","p90_4d_continuous","p90_5d_continuous")
+
+vif_check_result <- matrix(NA,ncol=5,nrow=20)
+for (i in 1:20){
+  formula_str <- paste("Cases ~TAVG+relative.humidity+PRCP+wind.speed+", paste(var_list[i],collapse = " + "))
+  formula_obj <- as.formula(formula_str)
+  fit_check <- glm(formula_obj,family = quasipoisson, data = full_dataset)
+  vif_values <- vif(fit_check)
+  vif_check_result[i,] <- vif_values
+}
+```
+
+```{r}
+colnames(vif_check_result) <- c("Average Temperature","Relative Humidity","Precipitation","Wind Speed","Extreme Temperature Events")
+rownames(vif_check_result) <- c("P5(2d)","P5(3d)","P7.5(2d)","P7.5(3d)","P7.5(4d)","P10(2d)","P10(3d)","P10(4d)","P10(5d)",
+                                   "P97.5(2d)","P97.5(3d)","P95(2d)","P95(3d)",
+                                   "P92.5(2d)","P92.5(3d)","P92.5(4d)",
+                                   "P90(2d)","P90(3d)","P90(4d)","P90(5d)")
+vif_check_result
+```
+

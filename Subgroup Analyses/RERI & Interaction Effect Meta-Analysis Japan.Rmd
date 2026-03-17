@@ -1,0 +1,249 @@
+---
+title: "Meta-Analysis Univariate Model"
+output: html_document
+date: "2024-10-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(metafor)
+library(meta)
+library(mgcv)
+library(grid)
+library(forestplot)
+library(tidyverse)
+library(readxl)
+```
+
+## Interactive Effect
+
+### Meta-Regression
+
+```{r}
+full_dataset <- read.csv("../Data/Japan Data (ap exclu. outliers).csv")
+full_dataset <- full_dataset %>% as.data.frame()
+```
+
+```{r}
+annual_data <- full_dataset %>% group_by(NAME_1) %>% summarize(`PM2.5`=mean(PM25),
+                                                            NO2=mean(NO2),
+                                                            AverageTemperature=mean(TAVG),Precipitation=mean(PRCP),
+                                                            RelativeHumidity=mean(relative.humidity),
+                                                            WindSpeed=mean(wind.speed))
+colnames(annual_data) <- c("Region","PM2.5","NO2","AverageTemperature","Precipitation","RelativeHumidity","WindSpeed")
+```
+
+```{r}
+meta_regression_moderator <- function(main_factor,moderator,dataset){
+  moderator <- as.formula(paste0("~",moderator))
+  metareg <- rma(yi=log(Est.Lag3),sei = SE / Est.Lag3,mods=moderator,
+                 data=dataset[dataset$Factor==main_factor,],method="REML")
+  result <- summary(metareg)
+  result_df <- c(Coefficients = round(result$beta[2,1],4),SE = round(result$se[2],4),
+                 Z_value = round(result$zval[2],4),
+                 P_value = round(result$pval[2],4),CI = paste0("(",round(result$ci.lb[2],4),"-",round(result$ci.ub[2],4),")"))
+  return(result_df)
+}
+```
+
+```{r}
+joint_event <-  c("p95_pm25(90)_2d","p95_pm25(80)_2d","p95_pm25(70)_2d",
+                  "p925_pm25(90)_2d","p925_pm25(80)_2d","p925_pm25(70)_2d",
+                  "p90_pm25(90)_2d","p90_pm25(80)_2d","p90_pm25(70)_2d")
+moderator <- c("PM2.5","NO2","AverageTemperature","Precipitation","RelativeHumidity","WindSpeed")
+```
+
+```{r}
+interaction_heat_wave_pm25_cumul <- read.csv("../Results/Japan_interaction_heat_wave_pm25_cumul.csv")
+interaction_heat_wave_pm25_cumul <- interaction_heat_wave_pm25_cumul[,-1]
+interaction_heat_wave_pm25_cumul <- interaction_heat_wave_pm25_cumul[interaction_heat_wave_pm25_cumul$Region!="Okinawa",]
+interaction_heat_wave_pm25_cumul
+```
+
+```{r}
+joint_heat_wave_pm25_cumul_reg <- merge(interaction_heat_wave_pm25_cumul,annual_data,by="Region")
+```
+
+```{r}
+metareg_result_joint_event_pop <- matrix(NA,ncol=5,nrow=9*6)
+rowname_joint_event <- list(NULL)
+for (i in 1:9){
+  for (j in 1:6){
+    index <- (i-1)*6+j
+    metareg_result_joint_event_pop[index,] <- meta_regression_moderator(main_factor=joint_event[i],
+                                                                    moderator=moderator[j],
+                                                                    dataset=joint_heat_wave_pm25_cumul_reg)
+    rowname <- paste0(joint_event[i],":",moderator[j])
+    rowname_joint_event <- c(rowname_joint_event,rowname)
+  }
+}
+```
+
+```{r}
+metareg_result_joint_event_pop <- metareg_result_joint_event_pop %>% as.data.frame()
+colnames(metareg_result_joint_event_pop) <- c("estimate","se","zval","pval","95% CI")
+rownames(metareg_result_joint_event_pop) <- unlist(rowname_joint_event)
+metareg_result_joint_event_pop
+```
+
+### Meta-Analysis
+
+```{r}
+meta_analysis_overall <- function(main_factor,dataset){
+   meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR",
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML",
+                           control = list(stepadj = 0.2))
+  return(c(exp(meta_analysis$TE.random),exp(meta_analysis$lower.random),exp(meta_analysis$upper.random),meta_analysis$pval.Q))
+}
+```
+
+```{r}
+overall_meta_result_interaction <- matrix(NA,ncol=4,nrow=9)
+for (i in 1:9){
+  overall_meta_result_interaction[i,] <- meta_analysis_overall(main_factor=unique(joint_heat_wave_pm25_cumul_reg$Factor)[i],
+                                                               dataset=joint_heat_wave_pm25_cumul_reg)
+}
+overall_meta_result_interaction <- overall_meta_result_interaction %>% as.data.frame()
+colnames(overall_meta_result_interaction) <- c("smd","ci.lb","ci.ub","pval")
+rownames(overall_meta_result_interaction) <- unique(joint_heat_wave_pm25_cumul_reg$Factor)
+overall_meta_result_interaction
+```
+
+### Subgroup Meta-Analysis
+
+```{r}
+full_dataset <- full_dataset %>% mutate(Latitude_region_3=ifelse(NAME_1%in%c("Hokkaido","Aomori","Iwate","Miyagi","Akita","Yamagata","Fukushima"),"North",
+                                        ifelse(NAME_1%in%c("Niigata","Toyama","Ishikawa","Fukui","Gifu","Aichi","Mie","Shizuoka","Nagano","Yamanashi",
+                                                           "Gunma","Tochigi","Ibaraki","Saitama","Chiba","Tokyo","Kanagawa"),"East","West")))
+```
+
+```{r}
+latitude_define <- full_dataset %>% group_by(NAME_1) %>% summarize(Latitude_Area=Latitude_region_3) %>% unique()
+colnames(latitude_define) <- c("Region","Latitude_Area")
+interaction_heat_wave_pm25_cumul_lat <- merge(interaction_heat_wave_pm25_cumul,latitude_define,by="Region")
+interaction_heat_wave_pm25_cumul_lat$Latitude_Area <- factor(interaction_heat_wave_pm25_cumul_lat$Latitude_Area,levels=c("North","East","West"))
+```
+
+```{r}
+subgroup_climate <- function(main_factor,dataset){
+  meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR", 
+                           fixed = FALSE,
+                           random = TRUE,
+                           method.tau = "REML")
+  meta_analysis_subgroup <- update(meta_analysis, 
+                                   subgroup = dataset[dataset$Factor==main_factor,"Latitude_Area"],tau.common = FALSE)
+  result <- t(rbind(round(exp(meta_analysis_subgroup$TE.random.w),2),round(exp(meta_analysis_subgroup$lower.random.w),2),
+                    round(exp(meta_analysis_subgroup$upper.random.w),2),round(meta_analysis_subgroup$I2.w,2)))
+  result <- cbind(result,paste0("(",round(exp(meta_analysis_subgroup$lower.random.w),2),",",round(exp(meta_analysis_subgroup$upper.random.w),2),")"))
+  result <- cbind(result,c(rep(NA,length(meta_analysis_subgroup$TE.random.w)-1),meta_analysis_subgroup$pval.Q.b.random))
+  return(result)
+}
+```
+
+```{r,warning=FALSE}
+Climate_meta_result_joint_effect <- matrix(NA,ncol=6,nrow=9*3)
+for (i in 1:9){
+   Climate_meta_result_joint_effect[((i-1)*3+1):(i*3),] <- subgroup_climate(main_factor=joint_event[i],dataset=interaction_heat_wave_pm25_cumul_lat)
+}
+Climate_meta_result_joint_effect <- Climate_meta_result_joint_effect %>% as.data.frame()
+colnames(Climate_meta_result_joint_effect) <- c("smd","ci.lb","ci.ub","I2","RR(95% CI)","pval")
+rownames(Climate_meta_result_joint_effect) <- c(paste(joint_event[1]," Q", 1:3, sep=""),paste(joint_event[2]," Q",1:3, sep=""),
+                               paste(joint_event[3]," Q",1:3, sep=""),paste(joint_event[4]," Q",1:3, sep=""),
+                               paste(joint_event[5]," Q",1:3, sep=""),paste(joint_event[6]," Q",1:3, sep=""),
+                               paste(joint_event[7]," Q",1:3, sep=""),paste(joint_event[8]," Q",1:3, sep=""),
+                               paste(joint_event[9]," Q",1:3, sep=""))
+Climate_meta_result_joint_effect
+```
+
+## RERI
+
+### Overall Meta-Analysis
+
+```{r}
+RERI_matrix <- read.csv("../Results/Japan_RERI.csv")
+RERI_matrix <- RERI_matrix[,-1] %>% as.data.frame()
+RERI_matrix_updated <- RERI_matrix[RERI_matrix$Region!="Okinawa",]
+```
+
+```{r}
+meta_analysis_RERI <- function(main_factor,dataset){
+   meta_analysis <- metagen(TE = RERI,
+                           seTE = SE,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "MD", 
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML",
+                           control = list(stepadj = 0.2))
+  return(c(meta_analysis$TE.random,meta_analysis$lower.random,meta_analysis$upper.random,meta_analysis$pval.Q))
+}
+```
+
+```{r}
+overall_meta_result_RERI<- matrix(NA,ncol=4,nrow=9)
+for (i in 1:9){
+  overall_meta_result_RERI[i,] <- meta_analysis_RERI(main_factor=unique(RERI_matrix_updated$Factor)[i],
+                                                               dataset=RERI_matrix_updated)
+  print(i)
+}
+overall_meta_result_RERI <- overall_meta_result_RERI %>% as.data.frame()
+colnames(overall_meta_result_RERI) <- c("smd","ci.lb","ci.ub","pval")
+rownames(overall_meta_result_RERI) <- unique(RERI_matrix_updated$Factor)
+overall_meta_result_RERI
+```
+
+```{r}
+RERI_matrix_lat <- merge(RERI_matrix,latitude_define,by="Region")
+RERI_matrix_lat$Latitude_Area <- factor(RERI_matrix_lat$Latitude_Area,levels=c("North","East","West"))
+RERI_matrix_lat
+```
+
+```{r}
+subgroup_climate <- function(main_factor,dataset){
+  meta_analysis <-metagen(TE = RERI,
+                           seTE = SE,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "MD", 
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML",
+                           control = list(stepadj = 0.2))
+  meta_analysis_subgroup <- update(meta_analysis, 
+                                   subgroup = dataset[dataset$Factor==main_factor,"Latitude_Area"],tau.common = FALSE)
+  result <- t(rbind(round(meta_analysis_subgroup$TE.random.w,2),round(meta_analysis_subgroup$lower.random.w,2),
+                    round(meta_analysis_subgroup$upper.random.w,2),round(meta_analysis_subgroup$I2.w,2)))
+  result <- cbind(result,paste0("(",round(meta_analysis_subgroup$lower.random.w,2),",",round(meta_analysis_subgroup$upper.random.w,2),")"))
+  result <- cbind(result,c(rep(NA,length(meta_analysis_subgroup$TE.random.w)-1),meta_analysis_subgroup$pval.Q.b.random))
+  return(result)
+}
+```
+
+```{r,warning=FALSE}
+Climate_meta_result_RERI <- matrix(NA,ncol=6,nrow=9*3)
+for (i in 1:9){
+   Climate_meta_result_RERI[((i-1)*3+1):(i*3),] <- subgroup_climate(main_factor=unique(RERI_matrix_lat$Factor)[i],dataset=RERI_matrix_lat)
+}
+Climate_meta_result_RERI <- Climate_meta_result_RERI %>% as.data.frame()
+colnames(Climate_meta_result_RERI) <- c("smd","ci.lb","ci.ub","I2","RR(95% CI)","pval")
+rownames(Climate_meta_result_RERI) <- c(paste(unique(RERI_matrix_lat$Factor)[1]," Q", 1:3, sep=""),paste(unique(RERI_matrix_lat$Factor)[2]," Q",1:3, sep=""),
+                               paste(unique(RERI_matrix_lat$Factor)[3]," Q",1:3, sep=""),paste(unique(RERI_matrix_lat$Factor)[4]," Q",1:3, sep=""),
+                               paste(unique(RERI_matrix_lat$Factor)[5]," Q",1:3, sep=""),paste(unique(RERI_matrix_lat$Factor)[6]," Q",1:3, sep=""),
+                               paste(unique(RERI_matrix_lat$Factor)[7]," Q",1:3, sep=""),paste(unique(RERI_matrix_lat$Factor)[8]," Q",1:3, sep=""),
+                               paste(unique(RERI_matrix_lat$Factor)[9]," Q",1:3, sep=""))
+Climate_meta_result_RERI
+```
+
+
+

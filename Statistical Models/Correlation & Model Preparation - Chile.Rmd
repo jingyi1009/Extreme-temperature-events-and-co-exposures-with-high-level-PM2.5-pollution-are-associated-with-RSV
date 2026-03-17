@@ -1,0 +1,176 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+
+```{r}
+full_dataset <- read.csv("../Data/Chile Data.csv")
+full_dataset <- full_dataset[,-1] %>% as.data.frame()
+```
+
+```{r}
+full_dataset <- full_dataset[,1:70]
+```
+
+```{r}
+colnames(full_dataset) <- c("Region","Date","Year","Week","Total Tests","Total RSV","Test Positivity Rate","PM2.5","PM10",
+                            "SO2","O3","NO2","Max.Temp","Min.Temp","Temp.Range","Avg.Temp","Prcp","RH","WS","AP",
+                            "Heat_p99","Heat_p975","Heat_p95","Cold_p01","Cold_p025","Cold_p05","Cold_p075","Cold_p10",
+                            "RWV-SD","RWV-DTD",
+                            "p1_2d","p1_3d","p1_4d","p1_5d",
+                            "p2.5_2d","p2.5_3d","p2.5_4d","p2.5_5d",
+                            "p5_2d","p5_3d","p5_4d","p5_5d",
+                            "p7.5_2d","p7.5_3d","p7.5_4d","p7.5_5d",
+                            "p10_2d","p10_3d","p10_4d","p10_5d",
+                            "p1_2d_continuous","p1_3d_continuous","p1_4d_continuous","p1_5d_continuous",
+                            "p2.5_2d_continuous","p2.5_3d_continuous","p2.5_4d_continuous","p2.5_5d_continuous",
+                            "p5_2d_continuous","p5_3d_continuous","p5_4d_continuous","p5_5d_continuous",
+                            "p7.5_2d_continuous","p7.5_3d_continuous","p7.5_4d_continuous","p7.5_5d_continuous",
+                            "p10_2d_continuous","p10_3d_continuous","p10_4d_continuous","p10_5d_continuous")
+```
+
+```{r}
+full_dataset <- full_dataset[full_dataset$Year!=2019,] %>% as.data.frame()
+```
+
+```{r}
+full_dataset2 <- full_dataset
+```
+
+## Define covariates and check model assumption
+
+### Correlations between extreme temperature events and RSV cases
+
+```{r}
+cor_data_RSV <- full_dataset[,c(6,59:60,63:65,67:70)]
+colnames(cor_data_RSV) <- c("RSV Cases","P5(2d)","P5(3d)","P7.5(2d)","P7.5(3d)","P7.5(4d)","P10(2d)","P10(3d)","P10(4d)","P10(5d)")
+```
+
+```{r}
+corr_tes_RSV <- round(cor(cor_data_RSV,method="spearman"),1)
+p.mat <- cor_pmat(corr_tes_RSV)
+ggcorrplot(corr_tes_RSV,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 18,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+```
+### Cold Spells: Spearman tests to exmaine the correlations
+
+```{r}
+cor_data <- full_dataset[,c(8,12,16:19,59:60,63:65,67:70)]
+colnames(cor_data) <- c("PM2.5","NO2","Average Temperature","Precipitation","Relative Humidity","Wind Speed",
+                         "P5(2d)","P5(3d)","P7.5(2d)","P7.5(3d)","P7.5(4d)","P10(2d)","P10(3d)","P10(4d)","P10(5d)")
+```
+
+```{r}
+corr_test_positive <- round(cor(cor_data,method="spearman"),1)
+p.mat <- cor_pmat(corr_test_positive)
+ggcorrplot(corr_test_positive2,
+           #hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           #p.mat = p.mat2,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 18,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+```
+
+### RSV cases and covariates
+  
+```{r}
+cor_data <- full_dataset[,c(6,8,12,16:19)]
+colnames(cor_data) <- c("RSV Cases","PM2.5","NO2","Average Temperature","Precipitation","Relative Humidity","Wind Speed")
+```
+
+```{r}
+corr_test <- round(cor(cor_data,method="spearman"),1)
+p.mat <- cor_pmat(corr_test)
+ggcorrplot(corr_test,
+           hc.order=TRUE,
+           type='lower',
+           lab=TRUE,
+           outline.color='white',
+           p.mat = p.mat,
+           #colors=diverge_hcl(3, palette='Blue Red2'),
+           colors= c("#57A0D3","white","#E4717A"),
+           ggtheme=theme_bw)+
+  scale_fill_gradient2(name = "Rho",
+                       low = "#57A0D3", high = "#E4717A", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab")+
+  theme(legend.position = "right",
+        axis.text = element_text(size = 18,family="sans",face="bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        legend.text = element_text(size = 14,family="sans"),
+        legend.title = element_text(size = 16,family="sans",face="bold"))
+```
+
+### Examine collinearity
+
+```{r}
+library(car)
+var_list <- c("p5_2d_continuous","p5_3d_continuous","p7.5_2d_continuous","p7.5_3d_continuous","p7.5_4d_continuous",
+              "p10_2d_continuous","p10_3d_continuous","p10_4d_continuous","p10_5d_continuous")
+vif_check_result <- matrix(NA,ncol=4,nrow=9)
+for (i in 1:9){
+  formula_str <- paste("`Total RSV` ~ Avg.Temp+RH+WS+", paste(var_list[i],collapse = " + "))
+  formula_obj <- as.formula(formula_str)
+  fit_check <- glm(formula_obj,family = quasipoisson, data = full_dataset)
+  vif_values <- vif(fit_check)
+  vif_check_result[i,] <- vif_values
+}
+```
+
+```{r}
+colnames(vif_check_result) <- c("Average Temperature","Relative Humidity","Wind Speed","Cold Spells")
+rownames(vif_check_result) <- c("P5(2d)","P5(3d)","P7.5(2d)","P7.5(3d)","P7.5(4d)","P10(2d)","P10(3d)","P10(4d)","P10(5d)")
+vif_check_result
+```
+
+

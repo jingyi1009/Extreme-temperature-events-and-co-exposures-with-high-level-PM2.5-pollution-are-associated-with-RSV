@@ -1,0 +1,214 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+```{r}
+full_dataset <- read.csv("../Data/Japan Data.csv")
+full_dataset <- full_dataset %>% as.data.frame()
+```
+
+```{r}
+population_data <- read_excel("../Data/Japan Population.xlsx",sheet=1)
+colnames(population_data) <- c("NAME_1","Population","Year")
+```
+
+```{r}
+full_dataset <- merge(full_dataset, population_data, by=c("NAME_1","Year"),all.x=TRUE) 
+```
+
+
+## Distribution of extreme temperature events
+
+```{r}
+prefecture_statistic <- full_dataset %>% group_by(NAME_1,Year) %>% summarize(no_p1_2d=sum(p1_2d_binary),
+                                              no_p1_3d=sum(p1_3d_binary),
+                                              no_p1_4d=sum(p1_4d_binary),
+                                              no_p1_5d=sum(p1_5d_binary),
+                                              no_p2.5_2d=sum(p2.5_2d_binary),
+                                              no_p2.5_3d=sum(p2.5_3d_binary),
+                                              no_p2.5_4d=sum(p2.5_4d_binary),
+                                              no_p2.5_5d=sum(p2.5_5d_binary),
+                                              no_p5_2d=sum(p5_2d_binary),
+                                              no_p5_3d=sum(p5_3d_binary),
+                                              no_p5_4d=sum(p5_4d_binary),
+                                              no_p5_5d=sum(p5_5d_binary),
+                                              no_p7.5_2d=sum(p7.5_2d_binary),
+                                              no_p7.5_3d=sum(p7.5_3d_binary),
+                                              no_p7.5_4d=sum(p7.5_4d_binary),
+                                              no_p7.5_5d=sum(p7.5_5d_binary),
+                                              no_p10_2d=sum(p10_2d_binary),
+                                              no_p10_3d=sum(p10_3d_binary),
+                                              no_p10_4d=sum(p10_4d_binary),
+                                              no_p10_5d=sum(p10_5d_binary),
+                                              
+                                              no_p99_2d=sum(p99_2d_binary),
+                                              no_p99_3d=sum(p99_3d_binary),
+                                              no_p99_4d=sum(p99_4d_binary),
+                                              no_p99_5d=sum(p99_5d_binary),
+                                              no_p97.5_2d=sum(p97.5_2d_binary),
+                                              no_p97.5_3d=sum(p97.5_3d_binary),
+                                              no_p97.5_4d=sum(p97.5_4d_binary),
+                                              no_p97.5_5d=sum(p97.5_5d_binary),
+                                              no_p95_2d=sum(p95_2d_binary),
+                                              no_p95_3d=sum(p95_3d_binary),
+                                              no_p95_4d=sum(p95_4d_binary),
+                                              no_p95_5d=sum(p95_5d_binary),
+                                              no_p90_2d=sum(p90_2d_binary),
+                                              no_p90_3d=sum(p90_3d_binary),
+                                              no_p90_4d=sum(p90_4d_binary),
+                                              no_p90_5d=sum(p90_5d_binary))
+prefecture_statistic
+```
+
+```{r}
+nationwide_statistic <- full_dataset %>% group_by(Year) %>% summarize(no_p1_2d=sum(p1_2d_binary),
+                                              no_p1_3d=sum(p1_3d_binary),
+                                              no_p1_4d=sum(p1_4d_binary),
+                                              no_p1_5d=sum(p1_5d_binary),
+                                              no_p2.5_2d=sum(p2.5_2d_binary),
+                                              no_p2.5_3d=sum(p2.5_3d_binary),
+                                              no_p2.5_4d=sum(p2.5_4d_binary),
+                                              no_p2.5_5d=sum(p2.5_5d_binary),
+                                              no_p5_2d=sum(p5_2d_binary),
+                                              no_p5_3d=sum(p5_3d_binary),
+                                              no_p5_4d=sum(p5_4d_binary),
+                                              no_p5_5d=sum(p5_5d_binary),
+                                              no_p7.5_2d=sum(p7.5_2d_binary),
+                                              no_p7.5_3d=sum(p7.5_3d_binary),
+                                              no_p7.5_4d=sum(p7.5_4d_binary),
+                                              no_p7.5_5d=sum(p7.5_5d_binary),
+                                              no_p10_2d=sum(p10_2d_binary),
+                                              no_p10_3d=sum(p10_3d_binary),
+                                              no_p10_4d=sum(p10_4d_binary),
+                                              no_p10_5d=sum(p10_5d_binary),
+                                              
+                                              no_p99_2d=sum(p99_2d_binary),
+                                              no_p99_3d=sum(p99_3d_binary),
+                                              no_p99_4d=sum(p99_4d_binary),
+                                              no_p99_5d=sum(p99_5d_binary),
+                                              no_p97.5_2d=sum(p97.5_2d_binary),
+                                              no_p97.5_3d=sum(p97.5_3d_binary),
+                                              no_p97.5_4d=sum(p97.5_4d_binary),
+                                              no_p97.5_5d=sum(p97.5_5d_binary),
+                                              no_p95_2d=sum(p95_2d_binary),
+                                              no_p95_3d=sum(p95_3d_binary),
+                                              no_p95_4d=sum(p95_4d_binary),
+                                              no_p95_5d=sum(p95_5d_binary),
+                                              no_p90_2d=sum(p90_2d_binary),
+                                              no_p90_3d=sum(p90_3d_binary),
+                                              no_p90_4d=sum(p90_4d_binary),
+                                              no_p90_5d=sum(p90_5d_binary))
+nationwide_statistic
+```
+
+
+## Time-series plots of average temperature and RSV in overall Japan
+
+### Nationwide time-series plots 
+
+```{r}
+nationwide_Japan <- full_dataset %>% group_by(Date) %>% summarize(`Average Temperature(°C)`=mean(TAVG),Cases=sum(Cases))
+nationwide_Japan
+```
+
+```{r}
+coeff <- 300
+TAVGColor <- "#4F81BD"
+caseColor <- "#C0504D"
+
+tavg_cases <- ggplot(nationwide_Japan, aes(x=as.Date(Date))) +
+  geom_line(aes(y=Cases/coeff,color="case"), linewidth=1) + 
+  geom_line(aes(y=`Average Temperature(°C)`,color="TAVG"), linewidth=1) +
+  scale_x_date(limits=c(as.Date("2013-1-1"),as.Date("2020-1-1")),
+               breaks=c(as.Date("2013-1-1"),as.Date("2014-1-1"),as.Date("2015-1-1"),as.Date("2016-1-1"),
+                        as.Date("2017-1-1"),as.Date("2018-1-1"),as.Date("2019-1-1"),as.Date("2019-12-31")),
+               labels=c("2013-Jan","2014-Jan","2015-Jan","2016-Jan","2017-Jan","2018-Jan","2019-Jan","2019-Dec")) +
+  xlab(" ")+
+  scale_color_manual(name= NULL,values = c("case" = caseColor,"TAVG"=TAVGColor),
+                     labels = c("RSV Cases","Average temperature(°C)")) +
+  scale_y_continuous(
+    name = "Weekly Mean Value",
+    sec.axis = sec_axis(~.*coeff, name="Total of Cases"),
+    limits=c(0,40),
+    breaks = seq(0, 40, by = 10)) +
+  theme_bw()+
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    axis.title = element_text(size = 18,family="sans",face="bold"),
+    axis.text = element_text(size = 18,family="sans"),
+    axis.text.x = element_text(angle=45,hjust=1),
+    plot.title = element_text(size = 18,family="sans",face="bold"),
+    legend.text = element_text(size = 18,family="sans",face="bold"),
+    legend.title = element_text(size = 18,family="sans",face="bold")
+  ) 
+tavg_cases
+```
+
+### Non-linear relationship between RSV and average temperature
+
+```{r}
+full_dataset_nationwide <- full_dataset %>% group_by(Date) %>% 
+  summarize(TAVG=mean(TAVG),Cases=sum(Cases),
+            Population=sum(Population),RH=mean(relative.humidity),PRCP=mean(PRCP),Week=mean(week),WS=mean(wind.speed))
+```
+
+```{r}
+# model nonlinear associations
+cb.tavg <- crossbasis(full_dataset_nationwide$TAVG, lag=3, argvar = list(fun = "ns", df = 3),arglag = list(fun = "ns", df = 3))
+model_tavg <- gam(Cases~cb.tavg+s(Week)+ns(RH,df=3)+ns(WS,df=3)+ns(PRCP,df=3),offset=log(Population),
+                  family=quasipoisson(),data=full_dataset_nationwide,method='REML',select=TRUE)
+pred_tavg <- crosspred(cb.tavg, model_tavg, by = 1, cen = quantile(full_dataset_nationwide$TAVG,0.5))
+results_tavg <- data.frame(temp = pred_tavg$predvar,rr = pred_tavg$allRRfit,rr_low = pred_tavg$allRRlow,rr_high = pred_tavg$allRRhigh)
+```
+
+```{r}
+# 绘图：类似你的图的上半部分
+ggplot(results_tavg, aes(x = temp, y = rr)) +
+  geom_line(color = "#2B547E",lwd=1) +
+  geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.2,fill="#4582B4") +
+  geom_vline(xintercept = quantile(full_dataset_nationwide$TAVG,0.5), color = "red", alpha=0.4,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_nationwide$TAVG,0.5)+1.7, y = 6, label = "50th (ref)",size=5)+
+  geom_vline(xintercept = quantile(full_dataset_nationwide$TAVG,0.75), color = "#36454F", alpha=0.6,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_nationwide$TAVG,0.75)+1, y = 6, label = "75th",size=5)+
+  geom_vline(xintercept = quantile(full_dataset_nationwide$TAVG,0.9), color = "#36454F", alpha=0.6,linetype = "dashed") +
+  annotate("text", x = quantile(full_dataset_nationwide$TAVG,0.9)+1, y = 6, label = "90th",size=5)+
+  geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+  scale_y_continuous(limits=c(0,6),breaks=seq(0,6,1))+
+  labs(x = "Average Temperature (°C)", y = "Relative Risk",title = " ") +
+  scale_x_continuous(limits=c(2,29),breaks=seq(2,29,by=3))+
+  theme_classic()+
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        axis.title = element_text(size = 18,family="sans",face="bold"),
+        plot.title = element_text(size = 18,family="sans",face="bold"),
+        axis.text = element_text(size = 18,family="sans"),
+        legend.text = element_text(size = 18,family="sans"),
+        legend.title = element_text(size = 18,family="sans",face="bold"))
+```
+

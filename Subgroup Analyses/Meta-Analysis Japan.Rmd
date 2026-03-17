@@ -1,0 +1,286 @@
+---
+title: "Meta-Analysis Univariate Model"
+output: html_document
+date: "2024-10-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(metafor)
+library(meta)
+library(mgcv)
+library(grid)
+library(forestplot)
+library(tidyverse)
+library(readxl)
+```
+
+## Load result file
+
+### Cold spells
+
+```{r}
+univariate_st_pop_cold_spells_result <- read.csv("../Results/Japan_st_cumul_cold_spells.csv")
+univariate_st_pop_cold_spells_result <- univariate_st_pop_cold_spells_result[,-1] %>% as.data.frame()
+univariate_st_pop_cold_spells_result <- univariate_st_pop_cold_spells_result[univariate_st_pop_cold_spells_result$Region!="Okinawa",] %>% as.data.frame()
+colnames(univariate_st_pop_cold_spells_result) <- c("Est.Lag3","2.5-Lag3","97.5-Lag3","SE","Factor","Region")
+```
+
+### Heat waves
+
+```{r}
+univariate_st_pop_heat_waves_result <- read.csv("../Results/Japan_st_cumul_heat_waves.csv")
+univariate_st_pop_heat_waves_result <- univariate_st_pop_heat_waves_result[,-1] %>% as.data.frame()
+univariate_st_pop_heat_waves_result <- univariate_st_pop_heat_waves_result[univariate_st_pop_heat_waves_result$Region!="Okinawa",] %>% as.data.frame()
+colnames(univariate_st_pop_heat_waves_result) <- c("Est.Lag3","2.5-Lag3","97.5-Lag3","SE","Factor","Region")
+```
+
+## Meta-Analysis Overall
+
+```{r}
+meta_analysis_overall <- function(main_factor,dataset){
+   meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = Region,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR",  
+                           common = FALSE,
+                           random = TRUE,
+                           method.tau = "REML",
+                           control = list(stepadj = 0.2))
+  return(c(exp(meta_analysis$TE.random),exp(meta_analysis$lower.random),exp(meta_analysis$upper.random),meta_analysis$pval.Q))
+}
+```
+
+### Cold Spells
+
+```{r}
+cold_spells <- unique(univariate_st_pop_cold_spells_result$Factor)[-1]
+```
+
+```{r}
+overall_meta_result_uni_st_pop_cold_spells <- matrix(NA,ncol=4,nrow=9)
+for (i in 1:9){
+   overall_meta_result_uni_st_pop_cold_spells[i,] <- meta_analysis_overall(main_factor=cold_spells[i],dataset=univariate_st_pop_cold_spells_result)
+}
+overall_meta_result_uni_st_pop_cold_spells <- overall_meta_result_uni_st_pop_cold_spells %>% as.data.frame()
+colnames(overall_meta_result_uni_st_pop_cold_spells) <- c("smd","ci.lb","ci.ub","pval")
+rownames(overall_meta_result_uni_st_pop_cold_spells) <- cold_spells 
+overall_meta_result_uni_st_pop_cold_spells
+```
+
+### Heat Waves
+
+```{r}
+main_heat_wave <- c("p97.5_2d","p97.5_3d","p95_2d","p95_3d","p92.5_2d","p92.5_3d","p92.5_4d",
+                    "p90_2d", "p90_3d", "p90_4d", "p90_5d")
+```
+
+```{r}
+overall_meta_result_uni_st_pop_heat_waves <- matrix(NA,ncol=4,nrow=11)
+for (i in 1:11){
+   overall_meta_result_uni_st_pop_heat_waves[i,] <- meta_analysis_overall(main_factor=main_heat_wave[i],dataset=univariate_st_pop_heat_waves_result)
+}
+overall_meta_result_uni_st_pop_heat_waves <- overall_meta_result_uni_st_pop_heat_waves %>% as.data.frame()
+colnames(overall_meta_result_uni_st_pop_heat_waves) <- c("smd","ci.lb","ci.ub","pval")
+rownames(overall_meta_result_uni_st_pop_heat_waves) <- main_heat_wave 
+metareg_sig_heat_wave_result
+```
+
+## Meta-Regression
+
+```{r}
+full_data <- read.csv("../Data/Japan Data.csv")
+(annual_data <- full_data %>% group_by(NAME_1) %>% summarize(PM2.5=mean(PM25),CO=mean(CO),
+                                                            NO2=mean(NO2),SO2=mean(SO2),
+                                                            AverageTemperature=mean(TAVG),MaximumTemperature=mean(TMAX),
+                                                            MinimumTemperature=mean(TMIN),Precipitation=mean(PRCP),
+                                                            RelativeHumidity=mean(relative.humidity),
+                                                            WindSpeed=mean(wind.speed)))
+```
+
+```{r}
+meta_regression_moderator <- function(main_factor,moderator,dataset){
+  moderator <- as.formula(paste0("~",moderator))
+  metareg <- rma(yi=log(Est.Lag3),sei = SE / Est.Lag3,mods=moderator,
+                 data=dataset[dataset$Factor==main_factor,],method="REML")
+  result <- summary(metareg)
+  result_df <- c(Coefficients = round(result$beta[2,1],4),SE = round(result$se[2],4),
+                 Z_value = round(result$zval[2],4),
+                 P_value = round(result$pval[2],4),CI = paste0("(",round(result$ci.lb[2],4),"-",round(result$ci.ub[2],4),")"))
+  return(result_df)
+}
+```
+
+### Cold Spells
+
+```{r}
+univariate_st_pop_cold_spells_result2 <- univariate_st_pop_cold_spells_result
+colnames(univariate_st_pop_cold_spells_result2)[6] <- c("NAME_1")
+univariate_cold_spell_result2 <- merge(univariate_st_pop_cold_spells_result2,annual_data,by="NAME_1")
+```
+
+```{r}
+main_cold_spell <- unique(univariate_cold_spell_result2$Factor)[-1]
+moderator <- c("PM2.5","CO","NO2","SO2","AverageTemperature","MaximumTemperature",
+               "MinimumTemperature","Precipitation","RelativeHumidity","WindSpeed")
+```
+
+```{r}
+metareg_result_cold_spell <- matrix(NA,ncol=5,nrow=9*10)
+rowname_cold_spell <- list(NULL)
+for (i in 1:9){
+  for (j in 1:10){
+    index <- (i-1)*10+j
+    metareg_result_cold_spell[index,] <- meta_regression_moderator(main_factor=main_cold_spell[i],
+                                                                    moderator=moderator[j],
+                                                                    dataset=univariate_cold_spell_result2)
+    rowname <- paste0(main_cold_spell[i],":",moderator[j])
+    rowname_cold_spell <- c(rowname_cold_spell,rowname)
+  }
+}
+```
+
+```{r}
+colnames(metareg_result_cold_spell) <- c("estimate","se","zval","pval","95% CI")
+rownames(metareg_result_cold_spell) <- unlist(rowname_cold_spell)
+(metareg_result_cold_spell <- metareg_result_cold_spell %>% as.data.frame())
+```
+
+```{r}
+(metareg_sig_cold_spell_result <- metareg_result_cold_spell[as.numeric(metareg_result_cold_spell$pval)<0.05,])
+```
+
+### Heat Waves
+
+```{r}
+univariate_st_pop_heat_waves_result2 <- univariate_st_pop_heat_waves_result
+colnames(univariate_st_pop_heat_waves_result2)[6] <- c("NAME_1")
+univariate_st_pop_heat_waves_result2 <- merge(univariate_st_pop_heat_waves_result2,annual_data,by="NAME_1")
+```
+
+```{r}
+main_heat_wave <- c("p97.5_2d","p97.5_3d","p95_2d","p95_3d","p92.5_2d","p92.5_3d","p92.5_4d",
+                    "p90_2d", "p90_3d", "p90_4d", "p90_5d")
+moderator <- c("PM2.5","CO","NO2","SO2","AverageTemperature","MaximumTemperature",
+               "MinimumTemperature","Precipitation","RelativeHumidity","WindSpeed")
+```
+
+```{r}
+metareg_result_heat_wave <- matrix(NA,ncol=5,nrow=11*10)
+rowname_heat_wave <- list(NULL)
+for (i in 1:11){
+  for (j in 1:10){
+    index <- (i-1)*10+j
+    metareg_result_heat_wave[index,] <- meta_regression_moderator(main_factor=main_heat_wave[i],
+                                                                    moderator=moderator[j],
+                                                                    dataset=univariate_st_pop_heat_waves_result2)
+    rowname <- paste0(main_heat_wave[i],":",moderator[j])
+    rowname_heat_wave <- c(rowname_heat_wave,rowname)
+  }
+}
+```
+
+```{r}
+colnames(metareg_result_heat_wave) <- c("estimate","se","zval","pval","95% CI")
+rownames(metareg_result_heat_wave) <- unlist(rowname_heat_wave)
+(metareg_result_heat_wave <- metareg_result_heat_wave %>% as.data.frame())
+```
+
+```{r}
+(metareg_sig_heat_wave_result <- metareg_result_heat_wave[as.numeric(metareg_result_heat_wave$pval)<0.05,])
+```
+
+## Subgroup Analysis
+
+```{r}
+full_dataset <- full_data %>% mutate(Latitude_region_3=ifelse(NAME_1%in%c("Hokkaido","Aomori","Iwate","Miyagi","Akita","Yamagata","Fukushima"),"North",
+                                        ifelse(NAME_1%in%c("Niigata","Toyama","Ishikawa","Fukui","Gifu","Aichi","Mie","Shizuoka","Nagano","Yamanashi",
+                                                           "Gunma","Tochigi","Ibaraki","Saitama","Chiba","Tokyo","Kanagawa"),"East","West")))
+latitude_define <- full_dataset %>% group_by(NAME_1) %>% summarize(Latitude_Area=Latitude_region_3) %>% unique()
+```
+
+```{r}
+univariate_cold_spell_result_lat <- merge(univariate_cold_spell_result2,latitude_define,by="NAME_1")
+univariate_cold_spell_result_lat$Region <- factor(univariate_cold_spell_result_lat$Latitude_Area,levels=c("North","East","West"))
+univariate_cold_spell_result_lat
+```
+
+```{r}
+subgroup_climate <- function(main_factor,dataset){
+  meta_analysis <- metagen(TE = log(Est.Lag3),
+                           seTE = SE / Est.Lag3,
+                           studlab = NAME_1,
+                           data = dataset[dataset$Factor == main_factor, ],
+                           sm = "RR",
+                           fixed = FALSE,
+                           random = TRUE,
+                           method.tau = "REML")
+  meta_analysis_subgroup <- update(meta_analysis, 
+                                   subgroup = dataset[dataset$Factor==main_factor,"Region"],tau.common = FALSE)
+  result <- t(rbind(round(exp(meta_analysis_subgroup$TE.random.w),2),round(exp(meta_analysis_subgroup$lower.random.w),2),
+                    round(exp(meta_analysis_subgroup$upper.random.w),2),round(meta_analysis_subgroup$I2.w,2)))
+  result <- cbind(result,paste0("(",round(exp(meta_analysis_subgroup$lower.random.w),2),",",round(exp(meta_analysis_subgroup$upper.random.w),2),")"))
+  result <- cbind(result,c(rep(NA,length(meta_analysis_subgroup$TE.random.w)-1),meta_analysis_subgroup$pval.Q.b.random))
+  return(result)
+}
+```
+
+```{r}
+univariate_cold_spell_result_lat_updated <- univariate_cold_spell_result_lat[univariate_cold_spell_result_lat$NAME_1!="Okinawa",]
+```
+
+### Cold Spells
+
+```{r}
+cold_spells <- c( "p5_2d","p5_3d","p7.5_2d","p7.5_3d","p7.5_4d","p10_2d","p10_3d","p10_4d","p10_5d")
+```
+
+```{r,warning=FALSE}
+Climate_meta_result_cold_spell <- matrix(NA,ncol=6,nrow=9*3)
+for (i in 1:9){
+   Climate_meta_result_cold_spell[((i-1)*3+1):(i*3),] <- subgroup_climate(main_factor=cold_spells[i],dataset=univariate_cold_spell_result_lat_updated)
+}
+Climate_meta_result_cold_spell <- Climate_meta_result_cold_spell %>% as.data.frame()
+colnames(Climate_meta_result_cold_spell) <- c("smd","ci.lb","ci.ub","I2","RR(95% CI)","pval")
+rownames(Climate_meta_result_cold_spell) <- c(paste(cold_spells[1]," Q", 1:3, sep=""),paste(cold_spells[2]," Q",1:3, sep=""),
+                               paste(cold_spells[3]," Q",1:3, sep=""),paste(cold_spells[4]," Q",1:3, sep=""),
+                               paste(cold_spells[5]," Q",1:3, sep=""),paste(cold_spells[6]," Q",1:3, sep=""),
+                               paste(cold_spells[7]," Q",1:3, sep=""),paste(cold_spells[8]," Q",1:3, sep=""),
+                               paste(cold_spells[9]," Q",1:3, sep=""))
+Climate_meta_result_cold_spell
+```
+
+### Heat Waves
+
+```{r}
+univariate_heat_wave_result2 <- univariate_st_pop_heat_waves_result
+colnames(univariate_heat_wave_result2)[6] <- c("NAME_1")
+univariate_heat_wave_result2 <- merge(univariate_heat_wave_result2,annual_data,by="NAME_1")
+univariate_heat_wave_result_lat <- merge(univariate_heat_wave_result2,latitude_define,by="NAME_1")
+univariate_heat_wave_result_lat$Region <- factor(univariate_heat_wave_result_lat$Latitude_Area,levels=c("North","East","West"))
+```
+
+```{r}
+univariate_heat_wave_result_lat_updated <- univariate_heat_wave_result_lat[univariate_heat_wave_result_lat$NAME_1!="Okinawa",]
+```
+
+```{r}
+heat_waves <- c("p97.5_2d","p97.5_3d","p95_2d", "p95_3d","p92.5_2d","p92.5_3d","p92.5_4d","p90_2d","p90_3d","p90_4d","p90_5d")
+```
+
+```{r,warning=FALSE}
+Climate_meta_result_heat_wave <- matrix(NA,ncol=6,nrow=11*3)
+for (i in 1:11){
+   Climate_meta_result_heat_wave[((i-1)*3+1):(i*3),] <- subgroup_climate(main_factor=heat_waves[i],dataset=univariate_heat_wave_result_lat_updated)
+}
+Climate_meta_result_heat_wave <- Climate_meta_result_heat_wave %>% as.data.frame()
+colnames(Climate_meta_result_heat_wave) <- c("smd","ci.lb","ci.ub","I2","RR(95% CI)","pval")
+rownames(Climate_meta_result_heat_wave) <- c(paste(heat_waves[1]," Q", 1:3, sep=""),paste(heat_waves[2]," Q",1:3, sep=""),
+                               paste(heat_waves[3]," Q",1:3, sep=""),paste(heat_waves[4]," Q",1:3, sep=""),
+                               paste(heat_waves[5]," Q",1:3, sep=""),paste(heat_waves[6]," Q",1:3, sep=""),
+                               paste(heat_waves[7]," Q",1:3, sep=""),paste(heat_waves[8]," Q",1:3, sep=""),
+                               paste(heat_waves[9]," Q",1:3, sep=""),paste(heat_waves[10]," Q",1:3, sep=""),
+                               paste(heat_waves[11]," Q",1:3, sep=""))
+Climate_meta_result_heat_wave
+```

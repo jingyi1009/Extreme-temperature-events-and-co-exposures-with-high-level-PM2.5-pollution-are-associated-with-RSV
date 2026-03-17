@@ -1,0 +1,1567 @@
+---
+title: "Extreme Temperature Impact"
+output: html_document
+date: "2024-09-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lattice)
+library(ggplot2)
+library(ggcorrplot)
+library(colorspace)
+library(corrplot)
+library(ggstatsplot)
+library(ggpubr)
+library(sf)
+library(spdep)
+library(terra)
+library(dlnm)
+library(glmmTMB)
+library(metafor)
+library(meta)
+library(mgcv)
+library(splines)
+library(ggdendro)
+```
+
+```{r}
+full_dataset <- read.csv("../Data/Japan Data.csv")
+full_dataset <- full_dataset %>% as.data.frame()
+```
+
+```{r}
+population_data <- read_excel("../Data/Japan Population.xlsx",sheet=1)
+colnames(population_data) <- c("NAME_1","Population","Year")
+```
+
+```{r}
+full_dataset <- merge(full_dataset, population_data, by=c("NAME_1","Year"),all.x=TRUE) 
+```
+
+```{r}
+geo_location <- read.csv("../Data/Japan LonLat.csv")
+colnames(geo_location)[1] <- "NAME_1"
+Japan.shapefile <- st_read('../Data/Japan_shp/JPN_adm1.shp')
+Japan.shapefile <- sp::merge(Japan.shapefile,geo_location,by="NAME_1",duplicateGeoms = TRUE) %>% st_as_sf()
+```
+
+```{r}
+nb_rook <- poly2nb(Japan.shapefile,queen = FALSE,row.names = Japan.shapefile$NAME_1) 
+coords <-  st_coordinates(Japan.shapefile)
+listw <- nb2listw(nb_rook,zero.policy = TRUE)
+```
+
+```{r}
+matrix_list <- listw2mat(w_mat_d_p2)
+colnames(matrix_list) <- Japan.shapefile$NAME_1
+rownames(matrix_list) <- colnames(matrix_list)
+matrix_list %>% as.data.frame()
+```
+
+```{r}
+prefecture_list <- unique(full_dataset$NAME_1)
+prefecture_list
+```
+
+## Cold Spells
+
+### Change degree of freedom
+
+#### df = 3
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+#### df = 4
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Change Lag Period
+
+#### Lag = 4
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+#### Lag = 5
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Remove Covariates - wind speed
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Account for interannual variability
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p2.5_2d <- crossbasis(region_data$p2.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_2d <- crossbasis(region_data$p5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_3d <- crossbasis(region_data$p5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p5_4d <- crossbasis(region_data$p5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_2d <- crossbasis(region_data$p7.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_3d <- crossbasis(region_data$p7.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p7.5_4d <- crossbasis(region_data$p7.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_2d <- crossbasis(region_data$p10_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_3d <- crossbasis(region_data$p10_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_4d <- crossbasis(region_data$p10_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p10_5d <- crossbasis(region_data$p10_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p2.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p2.5_2d+ns(wind.speed,df=3)+factor(Year)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p5_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                               "+ s(Week) + ns(TAVG,df=3) + ns(relative.humidity,df=3) + cb.p5_4d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                 "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p7.5_4d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+
+    uni_st_p10_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_4d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p10_5d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p2.5_2d_model <- gam(Cases~cb.p2.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_2d_model <- gam(Cases~cb.p5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_3d_model <- gam(Cases~cb.p5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p5_4d_model <- gam(Cases~cb.p5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                              offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p7.5_2d_model <- gam(Cases~cb.p7.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_3d_model <- gam(Cases~cb.p7.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p7.5_4d_model <- gam(Cases~cb.p7.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_2d_model <- gam(Cases~cb.p10_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_3d_model <- gam(Cases~cb.p10_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_4d_model <- gam(Cases~cb.p10_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p10_5d_model <- gam(Cases~cb.p10_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p25_2d.uni.st <- crosspred(cb.p2.5_2d,uni_st_p2.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_2d.uni.st <- crosspred(cb.p5_2d,uni_st_p5_2d_model,cen=1,cumul=TRUE,by=1)
+  p5_3d.uni.st <- crosspred(cb.p5_3d,uni_st_p5_3d_model,cen=1,cumul=TRUE,by=1)
+  p5_4d.uni.st <- crosspred(cb.p5_4d,uni_st_p5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p75_2d.uni.st <- crosspred(cb.p7.5_2d,uni_st_p7.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p75_3d.uni.st <- crosspred(cb.p7.5_3d,uni_st_p7.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p75_4d.uni.st <- crosspred(cb.p7.5_4d,uni_st_p7.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p10_2d.uni.st <- crosspred(cb.p10_2d,uni_st_p10_2d_model,cen=1,cumul=TRUE,by=1)
+  p10_3d.uni.st <- crosspred(cb.p10_3d,uni_st_p10_3d_model,cen=1,cumul=TRUE,by=1)
+  p10_4d.uni.st <- crosspred(cb.p10_4d,uni_st_p10_4d_model,cen=1,cumul=TRUE,by=1)
+  p10_5d.uni.st <- crosspred(cb.p10_5d,uni_st_p10_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+## Heat Waves
+
+### Change degree of freedom
+
+#### df = 3
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=3))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+#### df = 4
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=4))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Change Lag Period
+
+#### Lag = 4
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=4,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+#### Lag = 5
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=5,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d+ns(wind.speed,df=3)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d+ns(wind.speed,df=3)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Remove Covariates - wind speed
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
+
+### Account for interannual variability
+
+```{r}
+for (i in 1:47){
+  region_data <- full_dataset[full_dataset$NAME_1==prefecture_list[i],]
+  neighbours_id <- which(colnames(matrix_list)==prefecture_list[i])
+  neighbours_weight <- matrix_list[,neighbours_id]
+  neighbours_weight <- neighbours_weight[neighbours_weight>0]
+  neighbour_data <- matrix(NA,ncol=length(neighbours_weight),nrow=nrow(region_data))
+  if (length(neighbours_weight)>=1){
+    for (j in 1:length(neighbours_weight)){
+      neighbour_data[,j] <- full_dataset[full_dataset$NAME_1==names(neighbours_weight)[j],"Cases"]*neighbours_weight[j]
+    }
+    colnames(neighbour_data) <- paste0("neighbour",seq(1:length(neighbours_weight)))
+    region_data <- cbind(region_data,neighbour_data)
+  }
+  else{
+    region_data <- region_data
+  }
+  region_data2 <- region_data
+  colnames(region_data2) <- colnames(region_data)
+  region_data2$Year <- as.numeric(region_data2$Year)
+  region_data2$Week <- as.numeric(region_data2$week)
+  region_data2$Cases <- region_data2$Cases
+  
+  cb.p97.5_2d <- crossbasis(region_data2$p97.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p97.5_3d <- crossbasis(region_data2$p97.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p95_2d <- crossbasis(region_data2$p95_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p95_3d <- crossbasis(region_data2$p95_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p92.5_2d <- crossbasis(region_data2$p92.5_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_3d <- crossbasis(region_data2$p92.5_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p92.5_4d <- crossbasis(region_data2$p92.5_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  cb.p90_2d <- crossbasis(region_data2$p90_2d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_3d <- crossbasis(region_data2$p90_3d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_4d <- crossbasis(region_data2$p90_4d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  cb.p90_5d <- crossbasis(region_data2$p90_5d_continuous,lag=3,argvar=list(fun="lin"),arglag=list(fun="ns",df=2))
+  
+  if(length(neighbours_weight)>=1){
+    
+    neighbour_list <- paste0("ns(neighbour",seq(1:length(neighbours_weight)),")")
+    neighbour_list <- paste(neighbour_list, collapse = " + ")
+  
+    uni_st_p97.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_2d+ns(wind.speed,df=3)+factor(Year)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p97.5_3d+ns(wind.speed,df=3)+factor(Year)")),
+                                offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p95_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                  "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p92.5_4d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_2d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_3d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_4d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(as.formula(paste("Cases ~",neighbour_list,
+                                                "+ s(Week) + ns(TAVG,df=3) + ns(PRCP,df=3) + ns(relative.humidity,df=3) + cb.p90_5d+ns(wind.speed,df=3)+factor(Year)")),
+                               offset=log(Population),family=quasipoisson(),data=region_data2,method='REML',select=TRUE)
+    }
+  else{
+    uni_st_p97.5_2d_model <- gam(Cases~cb.p97.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p97.5_3d_model <- gam(Cases~cb.p97.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p95_2d_model <- gam(Cases~cb.p95_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p95_3d_model <- gam(Cases~cb.p95_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p92.5_2d_model <- gam(Cases~cb.p92.5_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_3d_model <- gam(Cases~cb.p92.5_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p92.5_4d_model <- gam(Cases~cb.p92.5_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    
+    uni_st_p90_2d_model <- gam(Cases~cb.p90_2d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_3d_model <- gam(Cases~cb.p90_3d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_4d_model <- gam(Cases~cb.p90_4d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+    uni_st_p90_5d_model <- gam(Cases~cb.p90_5d+s(Week)+ns(TAVG,df=3)+ns(PRCP,df=3)+ns(relative.humidity,df=3)+ns(wind.speed,df=3)+factor(Year),family=quasipoisson(),
+                                offset=log(Population),data=region_data2,method='REML',select=TRUE)
+  }
+  
+  p975_2d.uni.st <- crosspred(cb.p97.5_2d,uni_st_p97.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p975_3d.uni.st <- crosspred(cb.p97.5_3d,uni_st_p97.5_3d_model,cen=1,cumul=TRUE,by=1)
+
+  p95_2d.uni.st <- crosspred(cb.p95_2d,uni_st_p95_2d_model,cen=1,cumul=TRUE,by=1)
+  p95_3d.uni.st <- crosspred(cb.p95_3d,uni_st_p95_3d_model,cen=1,cumul=TRUE,by=1)
+  
+  p925_2d.uni.st <- crosspred(cb.p92.5_2d,uni_st_p92.5_2d_model,cen=1,cumul=TRUE,by=1)
+  p925_3d.uni.st <- crosspred(cb.p92.5_3d,uni_st_p92.5_3d_model,cen=1,cumul=TRUE,by=1)
+  p925_4d.uni.st <- crosspred(cb.p92.5_4d,uni_st_p92.5_4d_model,cen=1,cumul=TRUE,by=1)
+  
+  p90_2d.uni.st <- crosspred(cb.p90_2d,uni_st_p90_2d_model,cen=1,cumul=TRUE,by=1)
+  p90_3d.uni.st <- crosspred(cb.p90_3d,uni_st_p90_3d_model,cen=1,cumul=TRUE,by=1)
+  p90_4d.uni.st <- crosspred(cb.p90_4d,uni_st_p90_4d_model,cen=1,cumul=TRUE,by=1)
+  p90_5d.uni.st <- crosspred(cb.p90_5d,uni_st_p90_5d_model,cen=1,cumul=TRUE,by=1)
+}
+```
