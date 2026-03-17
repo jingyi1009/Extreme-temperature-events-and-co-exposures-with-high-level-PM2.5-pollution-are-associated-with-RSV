@@ -11,17 +11,17 @@ The `data` folder includes:
 4. **Data**:  CSV files contain both regional environmental factors and RSV cases and tests of Chile and prefectural environmental factors and RSV cases of Japan. Original RSV surveillance data in 47 Japanese prefectures can be accessed here: https://id-info.jihs.go.jp/en/index.html. For original Chilean data, access can be obtained by contacting the Public Health Institute of Chile, contact email: rfasce@ispch.cl.
 
 ## Research Content
-We provide demonstrations of our research on the **Analysis** branch.
+We provide demonstrations of our research on the **Analysis** branch, which contains four folders.
 
-1. **Descriptive Analysis**:
-Descriptive analysis was performed using the demo data, focusing on spatial and temporal trends of RSV infections and quantifying the seasonality of RSV epidemics.
+1. The `Descriptive Analyses` folder includes:
+Descriptive analyses were performed using the demo data, focusing on the occurrence of extreme temperature events, as well as national preliminary associations of RSV infections and average temperature.
 
-2. **Statistical Models**:
+2. The `Statistical Models` folder includes:
 Regression analyses examining associations between RSV infections and heat waves, cold spells, and their co-exposures with high-level PM2.5 pollution.
   
-3. **Subgroup Analyses**:
+3. The `Subgroup Analyses` folder includes:
 Includes detailed results from subgroup analyses conducted across different geographical groups.
 
-4. **Sensitivity Analyses**:
+4. The `Sensitivity Analyses` folder includes:
 Contains information on the sensitivity analyses we performed to validate the robustness of our findings.
 
